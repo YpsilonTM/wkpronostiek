@@ -1,0 +1,7 @@
+.env
+.pronotool_auth.json
+node_modules/
+bun.lock
+bun.lockb
+__pycache__/
+logs/
