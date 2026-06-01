@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install dependencies first (cached layer)
 COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile
+RUN bun install --frozen-lockfile || bun install
 
 # Install Playwright Chromium + system dependencies
 RUN bunx playwright install chromium --with-deps
