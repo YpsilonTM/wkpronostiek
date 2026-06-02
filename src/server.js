@@ -73,9 +73,12 @@ async function fetchUserPronosByMatchId(settings, api) {
 const encoder = new TextEncoder();
 const sseClients = new Set();
 
-function log(msg) {
+function log(msg, { broadcast = true } = {}) {
     const line = `[${new Date().toLocaleTimeString("nl-BE")}] ${msg}`;
     console.error(line);
+    if (!broadcast) {
+        return;
+    }
     const payload = encoder.encode(`data: ${JSON.stringify(line)}\n\n`);
     for (const controller of sseClients) {
         try {
@@ -84,6 +87,10 @@ function log(msg) {
             sseClients.delete(controller);
         }
     }
+}
+
+function logDebug(msg) {
+    log(`🧠 ${msg}`, { broadcast: false });
 }
 
 // ── Jobs ─────────────────────────────────────────────────────────────────────
@@ -98,7 +105,9 @@ async function runPredictSingle(match) {
 
     try {
         log(`🤖 Gemini voorspelt ${match.homeTeam} vs ${match.awayTeam}...`);
-        const predictions = await predictMatches(apiKey, [match]);
+        const predictions = await predictMatches(apiKey, [match], {
+            onDebug: (message) => logDebug(message)
+        });
         if (predictions.length === 0) {
             log(`No prediction recieved, try again.`);
             return null;
