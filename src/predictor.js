@@ -175,7 +175,7 @@ export async function predictMatches(apiKey, matches, options = {}) {
         .map((m) => `- matchId ${m.matchId}: ${m.homeTeam} vs ${m.awayTeam} (${m.phaseName}, ${m.startTime})`)
         .join("\n");
 
-        const prompt = `
+    const prompt = `
 Je bent een data-gedreven voetbalanalist voor WK 2026.
 Werk stap voor stap en gebruik Google Search actief per match.
 
