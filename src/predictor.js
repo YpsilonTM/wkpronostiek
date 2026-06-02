@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 
-const MODEL = "gemini-3.5-flash";
+const MODEL = "gemini-3.1-flash-lite";
 const PREDICTION_SCHEMA = {
     type: "array",
     items: {
@@ -129,6 +129,11 @@ function validatePredictions(predictions, expectedIds) {
         throw new Error("Gemini returned a prediction for an unknown matchId.");
     }
 
+    const hasMissingMatch = [...expectedIds].some((id) => !predictions.some((p) => p.matchId === id));
+    if (hasMissingMatch) {
+        throw new Error("Gemini returned an incomplete set of predictions.");
+    }
+
     const hasInvalidScores = predictions.some(
         (p) => !Number.isInteger(p.homeScore) || !Number.isInteger(p.awayScore)
     );
@@ -162,36 +167,58 @@ Geef exact 1 voorspelling per matchId uit de lijst.
 Gebruik in reasoning maximaal 2 korte zinnen.
 `.trim();
 
-    const response = await ai.models.generateContent({
-        model: MODEL,
-        contents: prompt,
-        config: {
-            tools: [{ googleSearch: {} }],
-            responseFormat: {
-                text: {
-                    mimeType: "application/json",
-                    schema: PREDICTION_SCHEMA
-                }
-            },
-            temperature: 0.4
-        }
-    });
+    let response;
+    try {
+        response = await ai.models.generateContent({
+            model: MODEL,
+            contents: prompt,
+            config: {
+                tools: [{ googleSearch: {} }],
+                responseFormat: {
+                    text: {
+                        mimeType: "application/json",
+                        schema: PREDICTION_SCHEMA
+                    }
+                },
+                temperature: 0.4
+            }
+        });
+    } catch {
+        return [];
+    }
 
     let parsed;
     try {
         parsed = tryParsePredictions(response.text);
     } catch {
-        parsed = await repairPredictions(ai, response.text);
+        try {
+            parsed = await repairPredictions(ai, response.text);
+        } catch {
+            return [];
+        }
     }
 
-    let normalized = normalizePredictions(parsed);
+    let normalized;
     try {
-        validatePredictions(normalized, expectedIds);
+        normalized = normalizePredictions(parsed);
     } catch {
-        const repairedParsed = await repairPredictions(ai, response.text || JSON.stringify(parsed));
-        normalized = normalizePredictions(repairedParsed);
-        validatePredictions(normalized, expectedIds);
+        return [];
     }
 
-    return normalized;
+    let filtered = normalized.filter((p) => expectedIds.has(p.matchId));
+
+    try {
+        validatePredictions(filtered, expectedIds);
+        return filtered;
+    } catch {
+        try {
+            const repairedParsed = await repairPredictions(ai, response.text || JSON.stringify(parsed));
+            normalized = normalizePredictions(repairedParsed);
+            filtered = normalized.filter((p) => expectedIds.has(p.matchId));
+            validatePredictions(filtered, expectedIds);
+            return filtered;
+        } catch {
+            return [];
+        }
+    }
 }

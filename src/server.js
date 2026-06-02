@@ -47,6 +47,27 @@ async function submitPredictions(api, settings, predictions) {
     );
 }
 
+async function fetchUserPronosByMatchId(settings, api) {
+    try {
+        const authorization = await resolveApiAuthorization(settings);
+        const overview = await api.fetchUserOverview(authorization);
+        const byMatchId = new Map();
+
+        for (const prono of overview.pronos || []) {
+            const matchId = Number(prono.matchId);
+            if (!Number.isInteger(matchId)) continue;
+            byMatchId.set(matchId, {
+                homeScore: Number(prono.homeScore),
+                awayScore: Number(prono.awayScore)
+            });
+        }
+
+        return byMatchId;
+    } catch {
+        return new Map();
+    }
+}
+
 // ── SSE log bus ──────────────────────────────────────────────────────────────
 
 const encoder = new TextEncoder();
@@ -67,103 +88,35 @@ function log(msg) {
 
 // ── Jobs ─────────────────────────────────────────────────────────────────────
 
-let jobRunning = false;
+let activeJobs = 0;
 
-async function runPredictTomorrow() {
-    if (jobRunning) {
-        log("⚠️ Al een job bezig, probeer later opnieuw.");
-        return;
-    }
-    jobRunning = true;
+async function runPredictSingle(match) {
+    activeJobs++;
     const settings = getSettings();
     const api = new PronotoolApiClient(settings);
     const apiKey = process.env.GEMINI_API_KEY || "";
 
     try {
-        const targetDay = tomorrowKeyLocal();
-        log(`🔍 Wedstrijden ophalen voor morgen (${targetDay})...`);
-
-        const allMatches = await api.fetchMatches();
-        const upcoming = getUpcomingMatches(allMatches);
-        const tomorrowMatches = getMatchesForDate(upcoming, targetDay);
-
-        if (tomorrowMatches.length === 0) {
-            log(`ℹ️ Geen wedstrijden gevonden voor morgen (${targetDay}).`);
-            return;
+        log(`🤖 Gemini voorspelt ${match.homeTeam} vs ${match.awayTeam}...`);
+        const predictions = await predictMatches(apiKey, [match]);
+        if (predictions.length === 0) {
+            log(`No prediction recieved, try again.`);
+            return null;
         }
 
-        log(`🤖 Gemini voorspelt ${tomorrowMatches.length} wedstrijd(en)...`);
-        const predictions = await predictMatches(apiKey, tomorrowMatches);
-
-        log(`📤 Indienen...`);
-        await submitPredictions(api, settings, predictions);
-        log(`✅ ${predictions.length} pronostieken ingediend voor ${targetDay}.`);
+        const prediction = predictions[0];
+        log(`📤 Indienen: ${match.homeTeam} ${prediction.homeScore}-${prediction.awayScore} ${match.awayTeam}...`);
+        await submitPredictions(api, settings, [prediction]);
+        log(`✅ Pronostiek ingediend voor ${match.homeTeam} vs ${match.awayTeam}.`);
+        return prediction;
     } catch (err) {
-        log(`❌ Fout: ${err instanceof Error ? err.message : String(err)}`);
+        log(`No prediction recieved, try again.`);
+        return null;
     } finally {
-        jobRunning = false;
+        activeJobs--;
     }
 }
 
-async function runPredictAll() {
-    if (jobRunning) {
-        log("⚠️ Al een job bezig, probeer later opnieuw.");
-        return;
-    }
-    jobRunning = true;
-    const settings = getSettings();
-    const api = new PronotoolApiClient(settings);
-    const apiKey = process.env.GEMINI_API_KEY || "";
-
-    try {
-        log(`🔍 Alle openstaande wedstrijden ophalen...`);
-        const allMatches = await api.fetchMatches();
-        const upcoming = getUpcomingMatches(allMatches);
-
-        if (upcoming.length === 0) {
-            log(`ℹ️ Geen openstaande wedstrijden gevonden.`);
-            return;
-        }
-
-        // Batch per speeldag
-        const grouped = new Map();
-        for (const m of upcoming) {
-            const label = String(m.matchday || "").trim() || `Dag ${dateKeyLocal(new Date(m.startTime))}`;
-            if (!grouped.has(label)) grouped.set(label, []);
-            grouped.get(label).push(m);
-        }
-
-        const batches = [...grouped.entries()];
-        log(`🤖 ${upcoming.length} wedstrijden in ${batches.length} speeldagen — Gemini aan het werk...`);
-
-        const allPredictions = [];
-        for (let i = 0; i < batches.length; i++) {
-            const [label, matches] = batches[i];
-            log(`  Batch ${i + 1}/${batches.length}: ${label} (${matches.length} match(es))...`);
-            const preds = await predictMatches(apiKey, matches);
-            allPredictions.push(...preds);
-        }
-
-        log(`📤 Indienen...`);
-        await submitPredictions(api, settings, allPredictions);
-        log(`✅ ${allPredictions.length} pronostieken ingediend.`);
-
-        const byDay = new Map();
-        for (const p of allPredictions) {
-            const match = upcoming.find((m) => Number(m.matchId) === p.matchId);
-            const label = match ? String(match.matchday || dateKeyLocal(new Date(match.startTime))) : "Onbekend";
-            byDay.set(label, (byDay.get(label) ?? 0) + 1);
-        }
-        log(`📊 Samenvatting:`);
-        for (const [day, count] of byDay.entries()) {
-            log(`  ${day}: ${count} ingediend`);
-        }
-    } catch (err) {
-        log(`❌ Fout: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-        jobRunning = false;
-    }
-}
 
 async function runAuthRefresh() {
     log(`🔑 Auth token vernieuwen...`);
@@ -208,46 +161,130 @@ const HTML = `<!DOCTYPE html>
     body { font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; padding: 2rem; }
     h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.25rem; }
     .subtitle { color: #94a3b8; font-size: 0.9rem; margin-bottom: 2rem; }
-    .buttons { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 2rem; }
+    #top-controls { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; align-items: center; }
     button {
-      padding: 0.6rem 1.2rem; border: none; border-radius: 0.5rem;
-      font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: opacity .15s;
+      padding: 0.5rem 1rem; border: none; border-radius: 0.5rem;
+      font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: opacity .15s;
     }
     button:hover { opacity: 0.85; }
     button:disabled { opacity: 0.4; cursor: not-allowed; }
     .btn-primary { background: #3b82f6; color: #fff; }
-    .btn-warning { background: #f59e0b; color: #000; }
     .btn-secondary { background: #475569; color: #fff; }
     .log-box {
       background: #1e293b; border-radius: 0.75rem; padding: 1rem;
-      height: 60vh; overflow-y: auto; font-family: monospace; font-size: 0.85rem;
-      line-height: 1.6; border: 1px solid #334155;
+            height: 32vh; overflow-y: auto; font-family: monospace; font-size: 0.85rem;
+            line-height: 1.6; border: 1px solid #334155; margin-bottom: 1.25rem;
     }
-    .log-line { padding: 0.1rem 0; border-bottom: 1px solid #1e293b; }
-    .log-line:last-child { border: none; }
-    #status { margin-bottom: 0.75rem; font-size: 0.85rem; color: #64748b; }
+    .log-line { padding: 0.1rem 0; }
+    #status { font-size: 0.85rem; color: #64748b; }
+    #matches { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 1rem; }
+    .match-card {
+        background: #1e293b; border-radius: 0.75rem; padding: 1.25rem;
+        border: 1px solid #334155;
+        display: flex;
+        flex-direction: column;
+        min-height: 148px;
+    }
+    .match-header { margin-bottom: 0.35rem; }
+    .match-teams { font-weight: 600; font-size: 1.02rem; line-height: 1.25; }
+    .match-meta { font-size: 0.78rem; color: #94a3b8; margin-bottom: 0.75rem; }
+    .match-actions {
+        margin-top: auto;
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 0.75rem;
+    }
+    .match-result {
+        font-weight: 600;
+        font-size: 0.92rem;
+        color: #eab308;
+        line-height: 1.2;
+        word-break: break-word;
+    }
+    .predict-btn { margin-left: auto; }
   </style>
 </head>
 <body>
   <h1>⚽ WK Pronostiek</h1>
   <p class="subtitle">Automatische dagelijkse run om ${SCHEDULE_HOUR}:00</p>
 
-  <div class="buttons">
-    <button class="btn-primary" onclick="trigger('/run/tomorrow')">🔮 Voorspel morgen</button>
-    <button class="btn-warning" onclick="trigger('/run/all')">🚀 Voorspel alles open</button>
+  <div id="top-controls">
     <button class="btn-secondary" onclick="trigger('/run/auth-refresh')">🔑 Auth vernieuwen</button>
+    <p id="status">Verbinden met log stream...</p>
   </div>
 
-  <p id="status">Verbinden met log stream...</p>
   <div class="log-box" id="log"></div>
+
+    <div id="matches">Laden...</div>
 
   <script>
     const logBox = document.getElementById('log');
-    const status = document.getElementById('status');
+    const statusEl = document.getElementById('status');
+    const matchesEl = document.getElementById('matches');
+
+    function createMatchCard(match) {
+        const card = document.createElement('div');
+        card.className = 'match-card';
+        card.id = 'match-' + match.matchId;
+
+        const startTime = new Date(match.startTime).toLocaleString('nl-BE', {
+            day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'
+        });
+
+        const hasCurrentPrediction = Number.isInteger(match.currentHomeScore) && Number.isInteger(match.currentAwayScore);
+        const resultHtml = hasCurrentPrediction
+            ? '<div class="match-result" id="score-' + match.matchId + '">Huidig: ' + match.currentHomeScore + ' - ' + match.currentAwayScore + '</div>'
+            : '<div class="match-result" id="score-' + match.matchId + '">Nog geen voorspelling</div>';
+        const predictButtonHtml = '<button class="btn-primary" onclick="predictMatch(' + match.matchId + ')">🔮 Voorspel</button>';
+
+        card.innerHTML = \`
+            <div class="match-header">
+                <div class="match-teams">\${match.homeTeam} vs \${match.awayTeam}</div>
+            </div>
+            <div class="match-meta">\${match.phaseName} • \${startTime}</div>
+            <div class="match-actions">\${resultHtml}<span class="predict-btn">\${predictButtonHtml}</span></div>
+        \`;
+        return card;
+    }
+
+    async function loadMatches() {
+        try {
+            const res = await fetch('/matches/upcoming');
+            if (!res.ok) throw new Error('Kon wedstrijden niet laden.');
+            const matches = await res.json();
+            matchesEl.innerHTML = '';
+            matches.forEach(m => matchesEl.appendChild(createMatchCard(m)));
+        } catch (err) {
+            matchesEl.innerHTML = 'Kon wedstrijden niet laden: ' + err.message;
+        }
+    }
+
+    async function predictMatch(matchId) {
+        const button = document.querySelector('#match-' + matchId + ' button');
+        if (button) button.disabled = true;
+
+        const res = await fetch('/run/predict-match/' + matchId, { method: 'POST' });
+        if (res.ok) {
+            const result = await res.json();
+            if (result && typeof result.homeScore === 'number') {
+                const scoreEl = document.getElementById('score-' + matchId);
+                if (scoreEl) {
+                    scoreEl.textContent = 'Huidig: ' + result.homeScore + ' - ' + result.awayScore;
+                }
+                if (button) button.disabled = false;
+            } else if (button) {
+                // Re-enable button on failure
+                button.disabled = false;
+            }
+        } else if (button) {
+            button.disabled = false;
+        }
+    }
 
     const es = new EventSource('/logs');
-    es.onopen = () => { status.textContent = '🟢 Verbonden'; };
-    es.onerror = () => { status.textContent = '🔴 Verbinding verbroken — pagina herladen om opnieuw te verbinden'; };
+    es.onopen = () => { statusEl.textContent = '🟢 Verbonden'; };
+    es.onerror = () => { statusEl.textContent = '🔴 Verbinding verbroken'; };
     es.onmessage = (e) => {
       const line = document.createElement('div');
       line.className = 'log-line';
@@ -257,19 +294,24 @@ const HTML = `<!DOCTYPE html>
     };
 
     async function trigger(path) {
-      const buttons = document.querySelectorAll('button');
-      buttons.forEach(b => b.disabled = true);
+      document.querySelectorAll('button').forEach(b => b.disabled = true);
       try {
         await fetch(path, { method: 'POST' });
       } finally {
-        setTimeout(() => buttons.forEach(b => b.disabled = false), 1000);
+        setTimeout(() => document.querySelectorAll('button').forEach(b => b.disabled = false), 1000);
       }
     }
+
+    loadMatches();
   </script>
 </body>
 </html>`;
 
 // ── HTTP Server ───────────────────────────────────────────────────────────────
+
+// Cache matches for 5 minutes
+let upcomingMatchesCache = null;
+let cacheTime = 0;
 
 Bun.serve({
     port: PORT,
@@ -279,6 +321,29 @@ Bun.serve({
 
         if (url.pathname === "/") {
             return new Response(HTML, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+        }
+
+        if (url.pathname === "/matches/upcoming") {
+            if (!upcomingMatchesCache || Date.now() - cacheTime > 5 * 60 * 1000) {
+                const settings = getSettings();
+                const api = new PronotoolApiClient(settings);
+                const allMatches = await api.fetchMatches();
+                const upcoming = getUpcomingMatches(allMatches);
+                const userPronosByMatchId = await fetchUserPronosByMatchId(settings, api);
+
+                upcomingMatchesCache = upcoming.map((match) => {
+                    const current = userPronosByMatchId.get(Number(match.matchId));
+                    return {
+                        ...match,
+                        currentHomeScore: current ? current.homeScore : null,
+                        currentAwayScore: current ? current.awayScore : null
+                    };
+                });
+                cacheTime = Date.now();
+            }
+            return new Response(JSON.stringify(upcomingMatchesCache), {
+                headers: { "Content-Type": "application/json" }
+            });
         }
 
         if (url.pathname === "/logs") {
@@ -312,14 +377,29 @@ Bun.serve({
             });
         }
 
-        if (req.method === "POST" && url.pathname === "/run/tomorrow") {
-            runPredictTomorrow().catch(console.error);
-            return new Response("ok");
-        }
+        if (req.method === "POST" && url.pathname.startsWith('/run/predict-match/')) {
+            const matchId = Number(url.pathname.split('/').pop());
+            if (isNaN(matchId)) return new Response("Invalid matchId", { status: 400 });
 
-        if (req.method === "POST" && url.pathname === "/run/all") {
-            runPredictAll().catch(console.error);
-            return new Response("ok");
+            if (!upcomingMatchesCache) {
+                return new Response("Match cache not ready, please refresh", { status: 409 });
+            }
+            const match = upcomingMatchesCache.find(m => m.matchId === matchId);
+            if (!match) return new Response("Match not found or not upcoming", { status: 404 });
+
+            const prediction = await runPredictSingle(match);
+
+            if (!prediction) {
+                return new Response(JSON.stringify({ error: "Prediction failed" }), {
+                    headers: { "Content-Type": "application/json" },
+                    status: 500
+                });
+            }
+
+            // Return prediction result
+            return new Response(JSON.stringify(prediction), {
+                headers: { "Content-Type": "application/json" }
+            });
         }
 
         if (req.method === "POST" && url.pathname === "/run/auth-refresh") {
