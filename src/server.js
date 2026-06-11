@@ -127,6 +127,54 @@ async function runPredictSingle(match) {
 }
 
 
+async function runPredictTomorrow() {
+    activeJobs++;
+    const settings = getSettings();
+                const api = new PronotoolApiClient(settings);
+    const apiKey = process.env.GEMINI_API_KEY || "";
+                        try {
+        log(`🤖 Automatische dagelijkse voorspelling gestart voor morgen...`);
+        const allMatches = await api.fetchMatches();
+        const tomorrowMatches = getMatchesForDate(allMatches, tomorrowKeyLocal());
+
+        if (tomorrowMatches.length === 0) {
+            log(`🤷 Geen wedstrijden gevonden voor morgen.`);
+            return;
+                        }
+
+        const userPronosByMatchId = await fetchUserPronosByMatchId(settings, api);
+        const matchesToPredict = tomorrowMatches.filter(match => {
+            const hasPrediction = userPronosByMatchId.has(Number(match.matchId));
+            if (hasPrediction) {
+                logDebug(`Skipping ${match.homeTeam} vs ${match.awayTeam}: already has a prediction.`);
+            }
+            return !hasPrediction;
+        });
+
+        if (matchesToPredict.length === 0) {
+            log(`✅ Alle wedstrijden voor morgen hebben al een pronostiek.`);
+            return;
+                }
+
+        const predictions = await predictMatches(apiKey, matchesToPredict, {
+            onDebug: (message) => logDebug(message)
+            });
+
+        if (predictions.length === 0) {
+            log(`No prediction recieved, try again.`);
+            return;
+        }
+
+        log(`📤 Indienen van ${predictions.length} pronostieken voor morgen...`);
+        await submitPredictions(api, settings, predictions);
+        log(`✅ Automatische dagelijkse voorspelling voltooid voor morgen.`);
+    } catch (err) {
+        log(`❌ Dagelijkse voorspelling mislukt: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+        activeJobs--;
+    }
+}
+
 async function runAuthRefresh() {
     log(`🔑 Auth token vernieuwen...`);
     const settings = getSettings();
@@ -153,7 +201,7 @@ function scheduleNext() {
     setTimeout(async () => {
         log(`⏰ Automatische dagelijkse run gestart.`);
         await runPredictTomorrow();
-        scheduleNext();
+scheduleNext();
     }, delay);
 }
 
@@ -422,3 +470,4 @@ Bun.serve({
 
 log(`🚀 Server draait op http://localhost:${PORT}`);
 scheduleNext();
+
