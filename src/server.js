@@ -4,6 +4,7 @@ import { getSettings } from "./config.js";
 import { resolveApiAuthorization } from "./auth.js";
 import { PronotoolApiClient } from "./pronotool-api.js";
 import { predictMatches } from "./predictor.js";
+import { pinoLogger, sseClients, encoder } from "./logger.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const SCHEDULE_HOUR = Number(process.env.SCHEDULE_HOUR || 11);
@@ -56,10 +57,14 @@ async function fetchUserPronosByMatchId(settings, api) {
         for (const prono of overview.pronos || []) {
             const matchId = Number(prono.matchId);
             if (!Number.isInteger(matchId)) continue;
-            byMatchId.set(matchId, {
-                homeScore: Number(prono.homeScore),
-                awayScore: Number(prono.awayScore)
-            });
+            // The API returns homeScore and awayScore, which might be undefined/null if not filled in
+            if (prono.homeScore !== undefined && prono.awayScore !== undefined && 
+                prono.homeScore !== null && prono.awayScore !== null) {
+                byMatchId.set(matchId, {
+                    homeScore: Number(prono.homeScore),
+                    awayScore: Number(prono.awayScore)
+                });
+            }
         }
 
         return byMatchId;
@@ -68,30 +73,7 @@ async function fetchUserPronosByMatchId(settings, api) {
     }
 }
 
-// ── SSE log bus ──────────────────────────────────────────────────────────────
 
-const encoder = new TextEncoder();
-const sseClients = new Set();
-
-function log(msg, { broadcast = true } = {}) {
-    const line = `[${new Date().toLocaleTimeString("nl-BE")}] ${msg}`;
-    console.error(line);
-    if (!broadcast) {
-        return;
-    }
-    const payload = encoder.encode(`data: ${JSON.stringify(line)}\n\n`);
-    for (const controller of sseClients) {
-        try {
-            controller.enqueue(payload);
-        } catch {
-            sseClients.delete(controller);
-        }
-    }
-}
-
-function logDebug(msg) {
-    log(`🧠 ${msg}`, { broadcast: false });
-}
 
 // ── Jobs ─────────────────────────────────────────────────────────────────────
 
@@ -104,22 +86,23 @@ async function runPredictSingle(match) {
     const apiKey = process.env.GEMINI_API_KEY || "";
 
     try {
-        log(`🤖 Gemini voorspelt ${match.homeTeam} vs ${match.awayTeam}...`);
+        pinoLogger.info(`🤖 Gemini voorspelt ${match.homeTeam} vs ${match.awayTeam}...`);
         const predictions = await predictMatches(apiKey, [match], {
-            onDebug: (message) => logDebug(message)
+            onDebug: (message) => pinoLogger.debug(message)
         });
         if (predictions.length === 0) {
-            log(`No prediction recieved, try again.`);
+            pinoLogger.info(`No prediction recieved, try again.`);
             return null;
         }
 
         const prediction = predictions[0];
-        log(`📤 Indienen: ${match.homeTeam} ${prediction.homeScore}-${prediction.awayScore} ${match.awayTeam}...`);
+        pinoLogger.info(`🧠 Reden: ${prediction.reasoning}`);
+        pinoLogger.info(`📤 Indienen: ${match.homeTeam} ${prediction.homeScore}-${prediction.awayScore} ${match.awayTeam}...`);
         await submitPredictions(api, settings, [prediction]);
-        log(`✅ Pronostiek ingediend voor ${match.homeTeam} vs ${match.awayTeam}.`);
+        pinoLogger.info(`✅ Pronostiek ingediend voor ${match.homeTeam} vs ${match.awayTeam}.`);
         return prediction;
     } catch (err) {
-        log(`No prediction recieved, try again.`);
+        pinoLogger.info(`No prediction recieved, try again.`);
         return null;
     } finally {
         activeJobs--;
@@ -133,12 +116,12 @@ async function runPredictTomorrow() {
                 const api = new PronotoolApiClient(settings);
     const apiKey = process.env.GEMINI_API_KEY || "";
                         try {
-        log(`🤖 Automatische dagelijkse voorspelling gestart voor morgen...`);
+        pinoLogger.info(`🤖 Automatische dagelijkse voorspelling gestart voor morgen...`);
         const allMatches = await api.fetchMatches();
         const tomorrowMatches = getMatchesForDate(allMatches, tomorrowKeyLocal());
 
         if (tomorrowMatches.length === 0) {
-            log(`🤷 Geen wedstrijden gevonden voor morgen.`);
+            pinoLogger.info(`🤷 Geen wedstrijden gevonden voor morgen.`);
             return;
                         }
 
@@ -146,43 +129,49 @@ async function runPredictTomorrow() {
         const matchesToPredict = tomorrowMatches.filter(match => {
             const hasPrediction = userPronosByMatchId.has(Number(match.matchId));
             if (hasPrediction) {
-                logDebug(`Skipping ${match.homeTeam} vs ${match.awayTeam}: already has a prediction.`);
+                pinoLogger.debug(`Skipping ${match.homeTeam} vs ${match.awayTeam}: already has a prediction.`);
             }
             return !hasPrediction;
         });
 
         if (matchesToPredict.length === 0) {
-            log(`✅ Alle wedstrijden voor morgen hebben al een pronostiek.`);
+            pinoLogger.info(`✅ Alle wedstrijden voor morgen hebben al een pronostiek.`);
             return;
                 }
 
         const predictions = await predictMatches(apiKey, matchesToPredict, {
-            onDebug: (message) => logDebug(message)
+            onDebug: (message) => pinoLogger.debug(message)
             });
 
         if (predictions.length === 0) {
-            log(`No prediction recieved, try again.`);
+            pinoLogger.info(`No prediction recieved, try again.`);
             return;
         }
 
-        log(`📤 Indienen van ${predictions.length} pronostieken voor morgen...`);
+        pinoLogger.info(`📤 Indienen van ${predictions.length} pronostieken voor morgen...`);
+        for (const prediction of predictions) {
+            const match = matchesToPredict.find(m => Number(m.matchId) === Number(prediction.matchId));
+            if (match) {
+                pinoLogger.info(`🧠 Reden voor ${match.homeTeam} vs ${match.awayTeam}: ${prediction.reasoning}`);
+            }
+        }
         await submitPredictions(api, settings, predictions);
-        log(`✅ Automatische dagelijkse voorspelling voltooid voor morgen.`);
+        pinoLogger.info(`✅ Automatische dagelijkse voorspelling voltooid voor morgen.`);
     } catch (err) {
-        log(`❌ Dagelijkse voorspelling mislukt: ${err instanceof Error ? err.message : String(err)}`);
+        pinoLogger.info(`❌ Dagelijkse voorspelling mislukt: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
         activeJobs--;
     }
 }
 
 async function runAuthRefresh() {
-    log(`🔑 Auth token vernieuwen...`);
+    pinoLogger.info(`🔑 Auth token vernieuwen...`);
     const settings = getSettings();
     try {
         await resolveApiAuthorization(settings, { forceRefresh: true });
-        log(`✅ Auth token vernieuwd.`);
+        pinoLogger.info(`✅ Auth token vernieuwd.`);
     } catch (err) {
-        log(`❌ Auth fout: ${err instanceof Error ? err.message : String(err)}`);
+        pinoLogger.info(`❌ Auth fout: ${err instanceof Error ? err.message : String(err)}`);
     }
 }
 
@@ -196,10 +185,10 @@ function scheduleNext() {
 
     const delay = next - now;
     const nextStr = next.toLocaleString("nl-BE", { timeZone: "Europe/Brussels" });
-    log(`🕐 Volgende automatische run: ${nextStr}`);
+    pinoLogger.info(`🕐 Volgende automatische run: ${nextStr}`);
 
     setTimeout(async () => {
-        log(`⏰ Automatische dagelijkse run gestart.`);
+        pinoLogger.info(`⏰ Automatische dagelijkse run gestart.`);
         await runPredictTomorrow();
 scheduleNext();
     }, delay);
@@ -410,6 +399,12 @@ Bun.serve({
                 start(c) {
                     controller = c;
                     sseClients.add(controller);
+                    
+                    // Force the stream to flush headers immediately so EventSource fires onopen
+                    try {
+                        controller.enqueue(encoder.encode(": connected\n\n"));
+                    } catch {}
+
                     // Keep connection alive
                     heartbeat = setInterval(() => {
                         try {
@@ -468,6 +463,6 @@ Bun.serve({
     }
 });
 
-log(`🚀 Server draait op http://localhost:${PORT}`);
+pinoLogger.info(`🚀 Server draait op http://localhost:${PORT}`);
 scheduleNext();
 
