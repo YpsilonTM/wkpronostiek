@@ -9,11 +9,12 @@ const PREDICTION_SCHEMA = {
             matchId: { type: "integer", description: "Unique match id from the input list." },
             homeTeam: { type: "string", description: "Home team name." },
             awayTeam: { type: "string", description: "Away team name." },
+            searchAnalysis: { type: "string", description: "Detailed step-by-step analysis of recent news, H2H, current form, 2026 World Cup matches, and odds." },
             homeScore: { type: "integer", minimum: 0, description: "Predicted home goals after 90 minutes." },
             awayScore: { type: "integer", minimum: 0, description: "Predicted away goals after 90 minutes." },
-            reasoning: { type: "string", description: "Short evidence-based explanation using search results." }
+            reasoning: { type: "string", description: "Short, 1-2 sentence final summary reasoning for the predicted score." }
         },
-        required: ["matchId", "homeTeam", "awayTeam", "homeScore", "awayScore", "reasoning"],
+        required: ["matchId", "homeTeam", "awayTeam", "searchAnalysis", "homeScore", "awayScore", "reasoning"],
         additionalProperties: false
     }
 };
@@ -118,7 +119,8 @@ function normalizePredictions(parsed) {
             awayTeam: String(item.awayTeam || "").trim(),
             homeScore,
             awayScore,
-            reasoning: String(item.reasoning || "").trim()
+            reasoning: String(item.reasoning || "").trim(),
+            searchAnalysis: String(item.searchAnalysis || "").trim()
         };
     });
 }
@@ -171,28 +173,39 @@ export async function predictMatches(apiKey, matches, options = {}) {
         }
     };
 
+    const todayStr = new Date().toLocaleDateString("nl-BE", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        timeZone: "Europe/Brussels"
+    });
+
     const matchList = matches
         .map((m) => `- matchId ${m.matchId}: ${m.homeTeam} vs ${m.awayTeam} (${m.phaseName}, ${m.startTime})`)
         .join("\n");
 
     const prompt = `
-Je bent een data-gedreven voetbalanalist voor WK 2026.
-Werk stap voor stap en gebruik Google Search actief per match.
+Je bent een data-gedreven voetbalanalist voor het WK 2026.
+VANDAAG IS HET: ${todayStr} (gebruik deze datum als referentiepunt voor 'recente' info en lopende WK 2026 resultaten).
 
-Voor ELKE match moet je minstens deze checks doen met recente bronnen:
-1) Teamnieuws laatste 14 dagen: blessures, schorsingen, rotatie, vermoedelijke basiself.
-2) Vorm laatste 5 wedstrijden per team: resultaten en doelpunten voor/tegen.
-3) Context-signaal: odds of ranking/Elo om sterkteverschil te ijken.
-4) Alleen na 90 minuten voorspellen (geen verlengingen, geen penalties).
+Werk uiterst systematisch en stap-voor-stap. Gebruik Google Search actief om de meest recente data per match op te zoeken. Zoek specifiek op recente blessures, opstellingen, eerdere WK-groepswedstrijden van dit WK, en bookmaker odds.
+
+Voor ELKE match moet je een grondige analyse doen op basis van deze 5 pijlers:
+1) Lopende WK 2026 prestaties: Hoe hebben beide teams gepresteerd in hun voorgaande poule- of knock-outmatchen op DIT WK 2026 (punten, doelpunten, vertoond spel, tactiek)?
+2) Teamnieuws & Selectie: Blessures, schorsingen, fysieke paraatheid of mogelijke rotatie in de laatste 14 dagen voorafgaand aan ${todayStr}. Denk aan sleutelspelers die ontbreken.
+3) Vorm & Momentum: Resultaten en doelsaldo van de laatste 5 officiële wedstrijden (inclusief pre-WK vriendschappelijke matchen of kwalificaties indien relevant).
+4) Context & Omgevingsfactoren: Historische onderlinge duels (Head-to-Head), thuisvoordeel (gastlanden VS, Canada, Mexico), reistijd/hoogteverschil/klimaat, en de belangen van de wedstrijd (moeten ze winnen om door te gaan?).
+5) Sterkte-indicatoren: Actuele bookmaker odds, FIFA Ranking en Elo ratings om het objectieve kwaliteitsverschil te ijken.
 
 BELANGRIJK OUTPUTCONTRACT (STRIKT VOLGEN):
-- Return ALLEEN een geldige JSON array. Geen markdown, geen code fences, geen titel, geen extra tekst.
+- Return ALLEEN een geldige JSON array. Geen markdown, geen code fences (zoals \`\`\`json), geen titel, geen extra tekst of inleiding.
 - De array moet exact ${matches.length} item(s) bevatten.
-- Elk item moet exact deze velden bevatten: matchId, homeTeam, awayTeam, homeScore, awayScore, reasoning.
-- Gebruik exact de matchId/homeTeam/awayTeam uit de input.
-- Scores moeten gehele getallen >= 0 zijn.
-- Reasoning maximaal 2 korte zinnen met concrete factoren (bv. blessure, vorm, odds/ranking).
-- Als recente info beperkt is: geef toch 1 conservatieve score, maar laat geen item weg.
+- Elk item moet exact deze velden bevatten: matchId, homeTeam, awayTeam, searchAnalysis, homeScore, awayScore, reasoning.
+- Gebruik exact de matchId, homeTeam en awayTeam uit de invoer.
+- Scores moeten gehele getallen >= 0 zijn (alleen reguliere speeltijd na 90 minuten voorspellen, GEEN verlengingen of strafschoppen).
+- In 'searchAnalysis' schrijf je jouw gedetailleerde stap-voor-stap analyse en zoekbevindingen over de 5 pijlers uit (minimaal 3 zinnen). Dit is je "Chain of Thought".
+- In 'reasoning' geef je een krachtige, finale samenvatting van maximaal 2 korte zinnen die de voorspelde score direct onderbouwt (bijv. "Team A mist hun topspits door een blessure opgelopen in de vorige WK-match, terwijl Team B in vorm is en met 2-0 won van Team C. We verwachten een krappe overwinning voor Team B.").
+- Als recente info beperkt is: geef toch 1 realistische/conservatieve score op basis van de historische sterkte en laat geen item weg.
 
 Gebruik dit formaat exact:
 [
@@ -200,13 +213,14 @@ Gebruik dit formaat exact:
         "matchId": 123,
         "homeTeam": "Team A",
         "awayTeam": "Team B",
+        "searchAnalysis": "Gedetailleerde analyse van WK-vorm, blessures, H2H, vermoeidheid en odds voor deze specifieke match.",
         "homeScore": 1,
         "awayScore": 0,
-        "reasoning": "Korte uitleg op basis van recente info."
+        "reasoning": "Korte finale samenvatting van de score op basis van de belangrijkste factoren."
     }
 ]
 
-Wedstrijden:
+Wedstrijden om te voorspellen:
 ${matchList}
 `.trim();
 
