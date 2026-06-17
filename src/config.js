@@ -14,9 +14,6 @@ export function getDataPath(filename) {
 }
 
 export async function ensureDataDir() {
-  if (!process.env.DATA_DIR) {
-    return;
-  }
   await fs.mkdir(getDataDir(), { recursive: true });
 }
 
