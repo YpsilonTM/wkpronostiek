@@ -8,6 +8,13 @@ import { pinoLogger, sseClients, encoder } from "./logger.js";
 import { Cron } from "croner";
 
 const predictedMatchIds = new Set();
+let upcomingMatchesCache = null;
+let cacheTime = 0;
+
+function invalidateUpcomingMatchesCache() {
+    upcomingMatchesCache = null;
+    cacheTime = 0;
+}
 
 const PORT = Number(process.env.PORT || 3000);
 const SCHEDULE_HOUR = Number(process.env.SCHEDULE_HOUR || 11);
@@ -82,6 +89,7 @@ async function fetchUserPronosByMatchId(settings, api) {
 // ── Jobs ─────────────────────────────────────────────────────────────────────
 
 let activeJobs = 0;
+let predictUpcomingRunning = false;
 
 async function runPredictSingle(match) {
     activeJobs++;
@@ -104,6 +112,7 @@ async function runPredictSingle(match) {
         pinoLogger.info(`📤 Indienen: ${match.homeTeam} ${prediction.homeScore}-${prediction.awayScore} ${match.awayTeam}...`);
         await submitPredictions(api, settings, [prediction]);
         predictedMatchIds.add(Number(match.matchId));
+        invalidateUpcomingMatchesCache();
         pinoLogger.info(`✅ Pronostiek ingediend voor ${match.homeTeam} vs ${match.awayTeam}.`);
         return prediction;
     } catch (err) {
@@ -116,6 +125,12 @@ async function runPredictSingle(match) {
 
 
 async function runPredictUpcoming() {
+    if (predictUpcomingRunning) {
+        pinoLogger.debug(`Skipping overlapping automatic prediction run.`);
+        return;
+    }
+
+    predictUpcomingRunning = true;
     activeJobs++;
     const settings = getSettings();
     const api = new PronotoolApiClient(settings);
@@ -123,6 +138,7 @@ async function runPredictUpcoming() {
     try {
         pinoLogger.debug(`🤖 Automatische voorspelling gestart voor aankomende wedstrijden...`);
         const allMatches = await api.fetchMatches();
+        const userPronosByMatchId = await fetchUserPronosByMatchId(settings, api);
         const now = new Date();
         const ONE_HOUR = 60 * 60 * 1000;
 
@@ -134,12 +150,18 @@ async function runPredictUpcoming() {
             const shouldPredict = timeUntilMatch > 0 && timeUntilMatch <= ONE_HOUR;
             if (!shouldPredict) return false;
 
-            // Skip only if already predicted in this session
-            const alreadyPredicted = predictedMatchIds.has(Number(match.matchId));
-            if (alreadyPredicted) {
+            const matchId = Number(match.matchId);
+
+            if (predictedMatchIds.has(matchId)) {
                 pinoLogger.debug(`Skipping ${match.homeTeam} vs ${match.awayTeam}: already predicted in this session.`);
                 return false;
             }
+
+            if (userPronosByMatchId.has(matchId)) {
+                pinoLogger.debug(`Skipping ${match.homeTeam} vs ${match.awayTeam}: already has a prono on Sporza.`);
+                return false;
+            }
+
             return true;
         });
 
@@ -162,15 +184,19 @@ async function runPredictUpcoming() {
             const match = matchesToPredict.find(m => Number(m.matchId) === Number(prediction.matchId));
             if (match) {
                 pinoLogger.info(`🧠 Reden voor ${match.homeTeam} vs ${match.awayTeam}: ${prediction.reasoning}`);
-                predictedMatchIds.add(Number(match.matchId));
             }
         }
         await submitPredictions(api, settings, predictions);
+        for (const prediction of predictions) {
+            predictedMatchIds.add(Number(prediction.matchId));
+        }
+        invalidateUpcomingMatchesCache();
         pinoLogger.info(`✅ Automatische voorspelling voltooid.`);
     } catch (err) {
         pinoLogger.info(`❌ Automatische voorspelling mislukt: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
         activeJobs--;
+        predictUpcomingRunning = false;
     }
 }
 
@@ -203,10 +229,6 @@ function startCronScheduler() {
 const HTML_FILE = Bun.file(new URL("./index.html", import.meta.url));
 
 // ── HTTP Server ───────────────────────────────────────────────────────────────
-
-// Cache matches for 5 minutes
-let upcomingMatchesCache = null;
-let cacheTime = 0;
 
 Bun.serve({
     port: PORT,
@@ -285,8 +307,13 @@ Bun.serve({
             if (!upcomingMatchesCache) {
                 return new Response("Match cache not ready, please refresh", { status: 409 });
             }
-            const match = upcomingMatchesCache.find(m => m.matchId === matchId);
+            const match = upcomingMatchesCache.find(m => Number(m.matchId) === matchId);
             if (!match) return new Response("Match not found or not upcoming", { status: 404 });
+
+            if (new Date(match.startTime) <= new Date()) {
+                invalidateUpcomingMatchesCache();
+                return new Response("Match has already started", { status: 409 });
+            }
 
             const prediction = await runPredictSingle(match);
 

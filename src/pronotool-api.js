@@ -136,10 +136,13 @@ export class PronotoolApiClient {
       return null;
     }
 
+    const homeScore = item.homeScore ?? null;
+    const awayScore = item.awayScore ?? null;
+
     return {
       matchId: String(item.matchId ?? ""),
-      homeScore: Number(item.homeScore ?? 0),
-      awayScore: Number(item.awayScore ?? 0),
+      homeScore: homeScore === null ? null : Number(homeScore),
+      awayScore: awayScore === null ? null : Number(awayScore),
       modifiedTime: typeof item.modifiedTime === "string" ? item.modifiedTime : null,
       points: Number.isInteger(item.points) ? item.points : null
     };
