@@ -1,7 +1,24 @@
 ﻿import path from "node:path";
 import dotenv from "dotenv";
+import fs from "node:fs/promises";
 
 dotenv.config();
+
+export function getDataDir() {
+  const dir = process.env.DATA_DIR || "";
+  return dir ? path.resolve(dir) : process.cwd();
+}
+
+export function getDataPath(filename) {
+  return path.join(getDataDir(), filename);
+}
+
+export async function ensureDataDir() {
+  if (!process.env.DATA_DIR) {
+    return;
+  }
+  await fs.mkdir(getDataDir(), { recursive: true });
+}
 
 export function getSettings() {
   return {
@@ -22,5 +39,9 @@ export function getSettings() {
 }
 
 export function getAuthCachePath(settings) {
-  return path.resolve(settings.pronotoolAuthCacheFile);
+  const file = settings.pronotoolAuthCacheFile || ".pronotool_auth.json";
+  if (path.isAbsolute(file)) {
+    return file;
+  }
+  return getDataPath(path.basename(file));
 }

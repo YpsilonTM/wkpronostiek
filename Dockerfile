@@ -22,6 +22,11 @@ RUN bunx playwright install chromium --with-deps
 # Copy application source
 COPY src/ ./src/
 
+ENV DATA_DIR=/app/data
+RUN mkdir -p /app/data
+
 EXPOSE 3000
+
+VOLUME ["/app/data"]
 
 CMD ["bun", "run", "src/server.js"]

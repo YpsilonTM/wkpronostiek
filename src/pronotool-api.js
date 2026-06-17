@@ -54,7 +54,9 @@ export class PronotoolApiClient {
         phaseName: m.phaseName,
         matchday: m.name,
         homeTeam: m.homeTeam?.name ?? null,
-        awayTeam: m.awayTeam?.name ?? null
+        awayTeam: m.awayTeam?.name ?? null,
+        homeScore: Number.isInteger(m.homeTeam?.score) ? m.homeTeam.score : (Number.isInteger(m.homeScore) ? m.homeScore : null),
+        awayScore: Number.isInteger(m.awayTeam?.score) ? m.awayTeam.score : (Number.isInteger(m.awayScore) ? m.awayScore : null)
       }))
     );
   }

@@ -1,5 +1,7 @@
 .env
 .pronotool_auth.json
+.prediction_log.jsonl
+data/
 node_modules/
 bun.lockb
 __pycache__/

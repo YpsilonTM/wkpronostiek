@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
 
-import { getSettings } from "./config.js";
+import { getSettings, ensureDataDir } from "./config.js";
 import { resolveApiAuthorization } from "./auth.js";
 import { PronotoolApiClient } from "./pronotool-api.js";
 import { predictMatches } from "./predictor.js";
+import { logPrediction, reportPredictionAccuracy } from "./prediction-log.js";
 import { pinoLogger, sseClients, encoder } from "./logger.js";
 import { Cron } from "croner";
 
@@ -45,7 +46,7 @@ function getMatchesForDate(matches, dateKey) {
     return matches.filter((m) => dateKeyLocal(new Date(m.startTime)) === dateKey);
 }
 
-async function submitPredictions(api, settings, predictions) {
+async function submitPredictions(api, settings, predictions, matchesById) {
     const authorization = await resolveApiAuthorization(settings);
     await api.setPronos(
         authorization,
@@ -57,6 +58,34 @@ async function submitPredictions(api, settings, predictions) {
             points: null
         }))
     );
+
+    for (const prediction of predictions) {
+        const match = matchesById.get(Number(prediction.matchId));
+        if (match) {
+            await logPrediction(prediction, match);
+        }
+    }
+}
+
+function attachCurrentPronos(matches, userPronosByMatchId) {
+    return matches.map((match) => {
+        const current = userPronosByMatchId.get(Number(match.matchId));
+        return {
+            ...match,
+            currentHomeScore: current ? current.homeScore : null,
+            currentAwayScore: current ? current.awayScore : null
+        };
+    });
+}
+
+function logPredictionDetails(prediction, matchLabel) {
+    pinoLogger.info(`🧠 Reden${matchLabel ? ` voor ${matchLabel}` : ""}: ${prediction.reasoning}`);
+    if (prediction.searchAnalysis) {
+        pinoLogger.info(`🔍 Analyse${matchLabel ? ` (${matchLabel})` : ""}: ${prediction.searchAnalysis}`);
+    }
+    if (prediction.escalated) {
+        pinoLogger.info(`⬆️ Heranalyse uitgevoerd met ${prediction.model} wegens lage zekerheid.`);
+    }
 }
 
 async function fetchUserPronosByMatchId(settings, api) {
@@ -108,9 +137,9 @@ async function runPredictSingle(match) {
         }
 
         const prediction = predictions[0];
-        pinoLogger.info(`🧠 Reden: ${prediction.reasoning}`);
+        logPredictionDetails(prediction);
         pinoLogger.info(`📤 Indienen: ${match.homeTeam} ${prediction.homeScore}-${prediction.awayScore} ${match.awayTeam}...`);
-        await submitPredictions(api, settings, [prediction]);
+        await submitPredictions(api, settings, [prediction], new Map([[Number(match.matchId), match]]));
         predictedMatchIds.add(Number(match.matchId));
         invalidateUpcomingMatchesCache();
         pinoLogger.info(`✅ Pronostiek ingediend voor ${match.homeTeam} vs ${match.awayTeam}.`);
@@ -138,32 +167,31 @@ async function runPredictUpcoming() {
     try {
         pinoLogger.debug(`🤖 Automatische voorspelling gestart voor aankomende wedstrijden...`);
         const allMatches = await api.fetchMatches();
+        await reportPredictionAccuracy(allMatches, (message) => pinoLogger.info(message));
         const userPronosByMatchId = await fetchUserPronosByMatchId(settings, api);
         const now = new Date();
         const ONE_HOUR = 60 * 60 * 1000;
 
-        const matchesToPredict = allMatches.filter(match => {
-            const startTime = new Date(match.startTime);
-            const timeUntilMatch = startTime.getTime() - now.getTime();
+        const matchesToPredict = attachCurrentPronos(
+            allMatches.filter((match) => {
+                const startTime = new Date(match.startTime);
+                const timeUntilMatch = startTime.getTime() - now.getTime();
 
-            // Match is starting within the next hour and is in the future
-            const shouldPredict = timeUntilMatch > 0 && timeUntilMatch <= ONE_HOUR;
-            if (!shouldPredict) return false;
+                // Match is starting within the next hour and is in the future
+                const shouldPredict = timeUntilMatch > 0 && timeUntilMatch <= ONE_HOUR;
+                if (!shouldPredict) return false;
 
-            const matchId = Number(match.matchId);
+                const matchId = Number(match.matchId);
 
-            if (predictedMatchIds.has(matchId)) {
-                pinoLogger.debug(`Skipping ${match.homeTeam} vs ${match.awayTeam}: already predicted in this session.`);
-                return false;
-            }
+                if (predictedMatchIds.has(matchId)) {
+                    pinoLogger.debug(`Skipping ${match.homeTeam} vs ${match.awayTeam}: already predicted in this session.`);
+                    return false;
+                }
 
-            if (userPronosByMatchId.has(matchId)) {
-                pinoLogger.debug(`Skipping ${match.homeTeam} vs ${match.awayTeam}: already has a prono on Sporza.`);
-                return false;
-            }
-
-            return true;
-        });
+                return true;
+            }),
+            userPronosByMatchId
+        );
 
         if (matchesToPredict.length === 0) {
             pinoLogger.debug(`🤷 Geen aankomende wedstrijden gevonden binnen 1 uur om te voorspellen.`);
@@ -180,13 +208,14 @@ async function runPredictUpcoming() {
         }
 
         pinoLogger.info(`📤 Indienen van ${predictions.length} pronostieken...`);
+        const matchesById = new Map(matchesToPredict.map((m) => [Number(m.matchId), m]));
         for (const prediction of predictions) {
-            const match = matchesToPredict.find(m => Number(m.matchId) === Number(prediction.matchId));
+            const match = matchesById.get(Number(prediction.matchId));
             if (match) {
-                pinoLogger.info(`🧠 Reden voor ${match.homeTeam} vs ${match.awayTeam}: ${prediction.reasoning}`);
+                logPredictionDetails(prediction, `${match.homeTeam} vs ${match.awayTeam}`);
             }
         }
-        await submitPredictions(api, settings, predictions);
+        await submitPredictions(api, settings, predictions, matchesById);
         for (const prediction of predictions) {
             predictedMatchIds.add(Number(prediction.matchId));
         }
@@ -340,6 +369,7 @@ Bun.serve({
 });
 
 pinoLogger.info(`🚀 Server draait op http://localhost:${PORT}`);
+ensureDataDir().catch(console.error);
 runPredictUpcoming().catch(console.error); // Check immediately on startup
 startCronScheduler();
 
