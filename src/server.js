@@ -4,8 +4,8 @@ import { getSettings, ensureDataDir } from "./config.js";
 import { resolveApiAuthorization } from "./auth.js";
 import { PronotoolApiClient } from "./pronotool-api.js";
 import { predictMatches } from "./predictor.js";
-import { logPrediction, reportPredictionAccuracy } from "./prediction-log.js";
-import { pinoLogger, sseClients, encoder } from "./logger.js";
+import { logPrediction, reportPredictionAccuracy, computePredictionAccuracy } from "./prediction-log.js";
+import { pinoLogger, sseClients, encoder, broadcastSse } from "./logger.js";
 import { Cron } from "croner";
 
 const predictedMatchIds = new Set();
@@ -19,6 +19,7 @@ function invalidateUpcomingMatchesCache() {
 
 const PORT = Number(process.env.PORT || 3000);
 const SCHEDULE_HOUR = Number(process.env.SCHEDULE_HOUR || 11);
+const AUTO_PREDICT_WINDOW_MS = 60 * 60 * 1000;
 
 // ── Utilities ────────────────────────────────────────────────────────────────
 
@@ -76,6 +77,46 @@ function attachCurrentPronos(matches, userPronosByMatchId) {
             currentAwayScore: current ? current.awayScore : null
         };
     });
+}
+
+function enrichMatchForUi(match) {
+    const startTime = new Date(match.startTime);
+    const msUntil = startTime.getTime() - Date.now();
+    const minutesUntilStart = Math.max(0, Math.floor(msUntil / 60_000));
+    const hasProno = Number.isInteger(match.currentHomeScore) && Number.isInteger(match.currentAwayScore);
+    const sessionPredicted = predictedMatchIds.has(Number(match.matchId));
+    const submitted = hasProno || sessionPredicted;
+    const inAutoWindow = msUntil > 0 && msUntil <= AUTO_PREDICT_WINDOW_MS;
+
+    return {
+        ...match,
+        minutesUntilStart,
+        submitted,
+        autoPredictScheduled: inAutoWindow && !submitted,
+        autoPredictAt: new Date(startTime.getTime() - AUTO_PREDICT_WINDOW_MS).toISOString()
+    };
+}
+
+function broadcastPredictionResult(prediction, match) {
+    broadcastSse({
+        type: "prediction",
+        matchId: Number(prediction.matchId),
+        homeTeam: match.homeTeam,
+        awayTeam: match.awayTeam,
+        homeScore: prediction.homeScore,
+        awayScore: prediction.awayScore,
+        reasoning: prediction.reasoning || "",
+        searchAnalysis: prediction.searchAnalysis || "",
+        model: prediction.model || null,
+        escalated: Boolean(prediction.escalated)
+    });
+}
+
+async function fetchAccuracyStats() {
+    const settings = getSettings();
+    const api = new PronotoolApiClient(settings);
+    const allMatches = await api.fetchMatches();
+    return computePredictionAccuracy(allMatches);
 }
 
 function logPredictionDetails(prediction, matchLabel) {
@@ -142,6 +183,7 @@ async function runPredictSingle(match) {
         await submitPredictions(api, settings, [prediction], new Map([[Number(match.matchId), match]]));
         predictedMatchIds.add(Number(match.matchId));
         invalidateUpcomingMatchesCache();
+        broadcastPredictionResult(prediction, match);
         pinoLogger.info(`✅ Pronostiek ingediend voor ${match.homeTeam} vs ${match.awayTeam}.`);
         return prediction;
     } catch (err) {
@@ -167,10 +209,13 @@ async function runPredictUpcoming() {
     try {
         pinoLogger.debug(`🤖 Automatische voorspelling gestart voor aankomende wedstrijden...`);
         const allMatches = await api.fetchMatches();
-        await reportPredictionAccuracy(allMatches, (message) => pinoLogger.info(message));
+        const accuracyStats = await reportPredictionAccuracy(allMatches, (message) => pinoLogger.info(message));
+        if (accuracyStats) {
+            broadcastSse({ type: "accuracy", ...accuracyStats });
+        }
         const userPronosByMatchId = await fetchUserPronosByMatchId(settings, api);
         const now = new Date();
-        const ONE_HOUR = 60 * 60 * 1000;
+        const ONE_HOUR = AUTO_PREDICT_WINDOW_MS;
 
         const matchesToPredict = attachCurrentPronos(
             allMatches.filter((match) => {
@@ -218,6 +263,10 @@ async function runPredictUpcoming() {
         await submitPredictions(api, settings, predictions, matchesById);
         for (const prediction of predictions) {
             predictedMatchIds.add(Number(prediction.matchId));
+            const match = matchesById.get(Number(prediction.matchId));
+            if (match) {
+                broadcastPredictionResult(prediction, match);
+            }
         }
         invalidateUpcomingMatchesCache();
         pinoLogger.info(`✅ Automatische voorspelling voltooid.`);
@@ -287,9 +336,24 @@ Bun.serve({
                 });
                 cacheTime = Date.now();
             }
-            return new Response(JSON.stringify(upcomingMatchesCache), {
+            const enriched = upcomingMatchesCache.map(enrichMatchForUi);
+            return new Response(JSON.stringify(enriched), {
                 headers: { "Content-Type": "application/json" }
             });
+        }
+
+        if (url.pathname === "/stats/accuracy") {
+            try {
+                const stats = await fetchAccuracyStats();
+                return new Response(JSON.stringify(stats), {
+                    headers: { "Content-Type": "application/json" }
+                });
+            } catch (err) {
+                return new Response(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }), {
+                    headers: { "Content-Type": "application/json" },
+                    status: 500
+                });
+            }
         }
 
         if (url.pathname === "/logs") {

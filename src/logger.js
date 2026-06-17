@@ -4,6 +4,17 @@ import pretty from "pino-pretty";
 const encoder = new TextEncoder();
 const sseClients = new Set();
 
+function broadcastSse(data) {
+  const payload = encoder.encode(`data: ${JSON.stringify(data)}\n\n`);
+  for (const controller of sseClients) {
+    try {
+      controller.enqueue(payload);
+    } catch {
+      sseClients.delete(controller);
+    }
+  }
+}
+
 const prettyStream = pretty({
   colorize: true,
   ignore: "pid,hostname",
@@ -20,24 +31,12 @@ const customStream = {
       const message = logObject.msg;
       // Only broadcast info level (30) or higher to the webpage
       if (message && logObject.level >= 30) {
-        const payload = encoder.encode(`data: ${JSON.stringify(message)}\n\n`);
-        for (const controller of sseClients) {
-          try {
-            controller.enqueue(payload);
-          } catch {
-            sseClients.delete(controller);
-          }
-        }
+        broadcastSse({ type: "log", level: logObject.level, message });
       }
-    } catch (e) {
-      // Fallback for non-JSON logs or parsing errors
-      const payload = encoder.encode(`data: ${JSON.stringify(chunk.toString().trim())}\n\n`);
-      for (const controller of sseClients) {
-        try {
-          controller.enqueue(payload);
-        } catch {
-          sseClients.delete(controller);
-        }
+    } catch {
+      const fallback = chunk.toString().trim();
+      if (fallback) {
+        broadcastSse({ type: "log", level: 30, message: fallback });
       }
     }
   }
@@ -50,4 +49,4 @@ const pinoLogger = pino(
   customStream
 );
 
-export { pinoLogger, sseClients, encoder };
+export { pinoLogger, sseClients, encoder, broadcastSse };

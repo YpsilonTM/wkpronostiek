@@ -61,10 +61,10 @@ async function readLogEntries() {
   }
 }
 
-export async function reportPredictionAccuracy(allMatches, logFn) {
+export async function computePredictionAccuracy(allMatches) {
     const entries = await readLogEntries();
     if (entries.length === 0) {
-        return;
+        return null;
     }
 
     const latestByMatchId = new Map();
@@ -94,11 +94,22 @@ export async function reportPredictionAccuracy(allMatches, logFn) {
         }
     }
 
-    if (evaluated === 0 || typeof logFn !== "function") {
-        return;
+    if (evaluated === 0) {
+        return null;
     }
 
     const exactPct = Math.round((exactHits / evaluated) * 100);
     const outcomePct = Math.round((outcomeHits / evaluated) * 100);
-    logFn(`📊 Pronostiek-accuratesse: ${exactHits}/${evaluated} exact (${exactPct}%), ${outcomeHits}/${evaluated} juiste uitslag (${outcomePct}%)`);
+
+    return { evaluated, exactHits, outcomeHits, exactPct, outcomePct };
+}
+
+export async function reportPredictionAccuracy(allMatches, logFn) {
+    const stats = await computePredictionAccuracy(allMatches);
+    if (!stats || typeof logFn !== "function") {
+        return stats;
+    }
+
+    logFn(`📊 Pronostiek-accuratesse: ${stats.exactHits}/${stats.evaluated} exact (${stats.exactPct}%), ${stats.outcomeHits}/${stats.evaluated} juiste uitslag (${stats.outcomePct}%)`);
+    return stats;
 }
