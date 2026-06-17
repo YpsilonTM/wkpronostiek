@@ -5,6 +5,9 @@ import { resolveApiAuthorization } from "./auth.js";
 import { PronotoolApiClient } from "./pronotool-api.js";
 import { predictMatches } from "./predictor.js";
 import { pinoLogger, sseClients, encoder } from "./logger.js";
+import { Cron } from "croner";
+
+const predictedMatchIds = new Set();
 
 const PORT = Number(process.env.PORT || 3000);
 const SCHEDULE_HOUR = Number(process.env.SCHEDULE_HOUR || 11);
@@ -99,6 +102,7 @@ async function runPredictSingle(match) {
         pinoLogger.info(`🧠 Reden: ${prediction.reasoning}`);
         pinoLogger.info(`📤 Indienen: ${match.homeTeam} ${prediction.homeScore}-${prediction.awayScore} ${match.awayTeam}...`);
         await submitPredictions(api, settings, [prediction]);
+        predictedMatchIds.add(Number(match.matchId));
         pinoLogger.info(`✅ Pronostiek ingediend voor ${match.homeTeam} vs ${match.awayTeam}.`);
         return prediction;
     } catch (err) {
@@ -110,55 +114,60 @@ async function runPredictSingle(match) {
 }
 
 
-async function runPredictTomorrow() {
+async function runPredictUpcoming() {
     activeJobs++;
     const settings = getSettings();
-                const api = new PronotoolApiClient(settings);
+    const api = new PronotoolApiClient(settings);
     const apiKey = process.env.GEMINI_API_KEY || "";
-                        try {
-        pinoLogger.info(`🤖 Automatische dagelijkse voorspelling gestart voor morgen...`);
+    try {
+        pinoLogger.debug(`🤖 Automatische voorspelling gestart voor aankomende wedstrijden...`);
         const allMatches = await api.fetchMatches();
-        const tomorrowMatches = getMatchesForDate(allMatches, tomorrowKeyLocal());
+        const now = new Date();
+        const ONE_HOUR = 60 * 60 * 1000;
 
-        if (tomorrowMatches.length === 0) {
-            pinoLogger.info(`🤷 Geen wedstrijden gevonden voor morgen.`);
-            return;
-                        }
+        const matchesToPredict = allMatches.filter(match => {
+            const startTime = new Date(match.startTime);
+            const timeUntilMatch = startTime.getTime() - now.getTime();
 
-        const userPronosByMatchId = await fetchUserPronosByMatchId(settings, api);
-        const matchesToPredict = tomorrowMatches.filter(match => {
-            const hasPrediction = userPronosByMatchId.has(Number(match.matchId));
-            if (hasPrediction) {
-                pinoLogger.debug(`Skipping ${match.homeTeam} vs ${match.awayTeam}: already has a prediction.`);
+            // Match is starting within the next hour and is in the future
+            const shouldPredict = timeUntilMatch > 0 && timeUntilMatch <= ONE_HOUR;
+            if (!shouldPredict) return false;
+
+            // Skip only if already predicted in this session
+            const alreadyPredicted = predictedMatchIds.has(Number(match.matchId));
+            if (alreadyPredicted) {
+                pinoLogger.debug(`Skipping ${match.homeTeam} vs ${match.awayTeam}: already predicted in this session.`);
+                return false;
             }
-            return !hasPrediction;
+            return true;
         });
 
         if (matchesToPredict.length === 0) {
-            pinoLogger.info(`✅ Alle wedstrijden voor morgen hebben al een pronostiek.`);
+            pinoLogger.debug(`🤷 Geen aankomende wedstrijden gevonden binnen 1 uur om te voorspellen.`);
             return;
-                }
+        }
 
         const predictions = await predictMatches(apiKey, matchesToPredict, {
             onDebug: (message) => pinoLogger.debug(message)
-            });
+        });
 
         if (predictions.length === 0) {
             pinoLogger.info(`No prediction recieved, try again.`);
             return;
         }
 
-        pinoLogger.info(`📤 Indienen van ${predictions.length} pronostieken voor morgen...`);
+        pinoLogger.info(`📤 Indienen van ${predictions.length} pronostieken...`);
         for (const prediction of predictions) {
             const match = matchesToPredict.find(m => Number(m.matchId) === Number(prediction.matchId));
             if (match) {
                 pinoLogger.info(`🧠 Reden voor ${match.homeTeam} vs ${match.awayTeam}: ${prediction.reasoning}`);
+                predictedMatchIds.add(Number(match.matchId));
             }
         }
         await submitPredictions(api, settings, predictions);
-        pinoLogger.info(`✅ Automatische dagelijkse voorspelling voltooid voor morgen.`);
+        pinoLogger.info(`✅ Automatische voorspelling voltooid.`);
     } catch (err) {
-        pinoLogger.info(`❌ Dagelijkse voorspelling mislukt: ${err instanceof Error ? err.message : String(err)}`);
+        pinoLogger.info(`❌ Automatische voorspelling mislukt: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
         activeJobs--;
     }
@@ -177,21 +186,15 @@ async function runAuthRefresh() {
 
 // ── Scheduler ────────────────────────────────────────────────────────────────
 
-function scheduleNext() {
-    const now = new Date();
-    const next = new Date(now);
-    next.setHours(SCHEDULE_HOUR, 0, 0, 0);
-    if (next <= now) next.setDate(next.getDate() + 1);
-
-    const delay = next - now;
-    const nextStr = next.toLocaleString("nl-BE", { timeZone: "Europe/Brussels" });
-    pinoLogger.info(`🕐 Volgende automatische run: ${nextStr}`);
-
-    setTimeout(async () => {
-        pinoLogger.info(`⏰ Automatische dagelijkse run gestart.`);
-        await runPredictTomorrow();
-scheduleNext();
-    }, delay);
+function startCronScheduler() {
+    pinoLogger.info(`🕐 Automatische check ingepland via Cron (elke 5 minuten - */5 * * * *).`);
+    new Cron("*/5 * * * *", async () => {
+        try {
+            await runPredictUpcoming();
+        } catch (err) {
+            pinoLogger.info(`❌ Fout tijdens automatische run: ${err instanceof Error ? err.message : String(err)}`);
+        }
+    });
 }
 
 // ── HTML UI ──────────────────────────────────────────────────────────────────
@@ -253,7 +256,7 @@ const HTML = `<!DOCTYPE html>
 </head>
 <body>
   <h1>⚽ WK Pronostiek</h1>
-  <p class="subtitle">Automatische dagelijkse run om ${SCHEDULE_HOUR}:00</p>
+  <p class="subtitle">Automatische run 1 uur voor aanvang van elke wedstrijd</p>
 
   <div id="top-controls">
     <button class="btn-secondary" onclick="trigger('/run/auth-refresh')">🔑 Auth vernieuwen</button>
@@ -464,5 +467,6 @@ Bun.serve({
 });
 
 pinoLogger.info(`🚀 Server draait op http://localhost:${PORT}`);
-scheduleNext();
+runPredictUpcoming().catch(console.error); // Check immediately on startup
+startCronScheduler();
 
