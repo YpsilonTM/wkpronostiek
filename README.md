@@ -1,72 +1,83 @@
-# WK Pronostiek Automation (Minimal)
+# WK Pronostiek Automation
 
-Dit is een bewust minimale codebase met alleen:
-- auth token ophalen/vernieuwen
-- huidige pronos ophalen
-- prono zetten voor een match
+SvelteKit + TypeScript app die WK Pronostiek automatiseert: Sporza API, Gemini AI-voorspellingen, browser login en een live dashboard.
 
-## Wat deze versie doet
+## Wat deze app doet
 
-- gebruikt een bestaande bearer token als die in `.env` staat
-- gebruikt anders een lokaal gecachte token uit `.pronotool_auth.json`
-- doet alleen als fallback een headless browser login met `VRT_EMAIL` + `VRT_PASSWORD`
+- Haalt aankomende wedstrijden op via de Sporza API
+- Voorspelt scores met Google Gemini (inclusief escalatie naar Pro bij lage zekerheid)
+- Dient pronostieken automatisch in 1 uur voor aanvang (cron elke 5 minuten)
+- Toont live logs, accuratesse en handmatige voorspel-knoppen in een Svelte dashboard
+- Gebruikt bearer token uit `.env`, lokale cache, of Playwright login als fallback
 
-Opmerking bij Bun:
-- de CLI draait met Bun
-- de browser fallback voor login draait via een kleine Node helper met Playwright (voor stabiliteit)
+## Stack
 
-Geen daemon, geen FastAPI service, geen predictor, geen Docker tooling.
+- **SvelteKit 2** + **Svelte 5** + **TypeScript**
+- **Bun** runtime (`svelte-adapter-bun`)
+- **croner** voor geplande runs
+- **Playwright** (via Node helper onder Bun) voor VRT SSO login
 
 ## Installatie
 
-```powershell
+```bash
 bun install
 bunx playwright install chromium
+bun run build:auth-helper
 ```
 
 ## Config
 
-```powershell
-Copy-Item .env.example .env
+```bash
+cp .env.example .env
 ```
 
-Belangrijkste variabelen in `.env`:
-- `VRT_EMAIL`
-- `VRT_PASSWORD`
-- `PRONOTOOL_AUTHORIZATION` (optioneel)
-- `PRONOTOOL_AUTH_CACHE_FILE` (optioneel, standaard `.pronotool_auth.json`)
+Belangrijkste variabelen:
+
+- `GEMINI_API_KEY` — verplicht voor AI-voorspellingen
+- `VRT_EMAIL` / `VRT_PASSWORD` — voor browser login fallback
+- `PRONOTOOL_AUTHORIZATION` — optionele directe bearer token
+- `DATA_DIR` — data map (default: cwd; Docker: `/app/data`)
+- `PORT` — server poort (default: 3000)
 
 ## Gebruik
 
-Huidige pronos ophalen:
+Development:
 
-```powershell
-bun run pronos
+```bash
+bun run dev
 ```
 
-Eén prono zetten:
+Production build + start:
 
-```powershell
-bun run set-prono --match-id 3332961 --home 2 --away 3
+```bash
+bun run build
+bun run start
 ```
 
-Auth cache bewust vernieuwen (force login + nieuwe token):
+Open http://localhost:3000
 
-```powershell
-bun run auth-refresh
+## API endpoints
+
+| Endpoint | Beschrijving |
+|----------|--------------|
+| `GET /api/matches/upcoming` | Aankomende wedstrijden met UI-metadata |
+| `GET /api/stats/accuracy` | Pronostiek-accuratesse |
+| `GET /api/logs` | SSE log stream |
+| `POST /api/run/predict-match/[id]` | Handmatige voorspelling |
+| `POST /api/run/auth-refresh` | Auth token vernieuwen |
+
+Legacy paden zonder `/api` prefix worden via `hooks.server.ts` doorgestuurd.
+
+## Docker
+
+```bash
+docker build -t wkpronostiek .
+docker run -p 3000:3000 --env-file .env -v wkpronostiek-data:/app/data wkpronostiek
 ```
 
-Met limit parameter:
+## Data bestanden
 
-```powershell
-bun run pronos -- --limit 1
-```
+- `.pronotool_auth.json` — gecachte bearer token
+- `.prediction_log.jsonl` — pronostiek log voor accuratesse
 
-## Structuur
-
-- `src/cli.js`: CLI entrypoint
-- `src/auth.js`: token kiezen/valideren/vernieuwen
-- `src/browser-login.js`: headless login fallback
-- `src/node-auth-login.mjs`: Node helper voor Playwright browser login (stabiel op Bun)
-- `src/pronotool-api.js`: API client voor user overview en prono updates
-- `src/config.js`: `.env` instellingen
+Beide staan standaard in `DATA_DIR`.

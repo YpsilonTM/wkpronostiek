@@ -3,6 +3,9 @@
 .prediction_log.jsonl
 data/
 node_modules/
+.svelte-kit/
+build/
 bun.lockb
 __pycache__/
-logs/
+/logs/
+scripts/node-auth-login.mjs

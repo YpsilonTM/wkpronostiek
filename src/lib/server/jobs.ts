@@ -1,0 +1,240 @@
+import { getSettings } from './config';
+import { resolveApiAuthorization } from './auth';
+import { PronotoolApiClient } from './pronotool-api';
+import { predictMatches } from './predictor';
+import { logPrediction, reportPredictionAccuracy, computePredictionAccuracy } from './prediction-log';
+import { pinoLogger, broadcastSse } from './logger';
+import {
+	predictedMatchIds,
+	getPredictUpcomingRunning,
+	setPredictUpcomingRunning,
+	incrementActiveJobs,
+	decrementActiveJobs,
+	invalidateUpcomingMatchesCache
+} from './app-state';
+import { attachCurrentPronos } from './match-enrichment';
+import { AUTO_PREDICT_WINDOW_MS } from './config';
+import type { Match, MatchWithProno } from '$lib/types/match';
+import type { Prediction } from '$lib/types/prediction';
+import type { Settings } from '$lib/types/settings';
+
+async function submitPredictions(
+	api: PronotoolApiClient,
+	settings: Settings,
+	predictions: Prediction[],
+	matchesById: Map<number, Match>
+): Promise<void> {
+	const authorization = await resolveApiAuthorization(settings);
+	await api.setPronos(
+		authorization,
+		predictions.map((p) => ({
+			matchId: p.matchId,
+			homeScore: p.homeScore,
+			awayScore: p.awayScore,
+			modifiedTime: null,
+			points: null
+		}))
+	);
+
+	for (const prediction of predictions) {
+		const match = matchesById.get(Number(prediction.matchId));
+		if (match) {
+			await logPrediction(prediction, match);
+		}
+	}
+}
+
+function broadcastPredictionResult(prediction: Prediction, match: Match): void {
+	broadcastSse({
+		type: 'prediction',
+		matchId: Number(prediction.matchId),
+		homeTeam: match.homeTeam,
+		awayTeam: match.awayTeam,
+		homeScore: prediction.homeScore,
+		awayScore: prediction.awayScore,
+		reasoning: prediction.reasoning || '',
+		searchAnalysis: prediction.searchAnalysis || '',
+		model: prediction.model || null,
+		escalated: Boolean(prediction.escalated)
+	});
+}
+
+function logPredictionDetails(prediction: Prediction, matchLabel?: string): void {
+	pinoLogger.info(`🧠 Reden${matchLabel ? ` voor ${matchLabel}` : ''}: ${prediction.reasoning}`);
+	if (prediction.searchAnalysis) {
+		pinoLogger.info(`🔍 Analyse${matchLabel ? ` (${matchLabel})` : ''}: ${prediction.searchAnalysis}`);
+	}
+	if (prediction.escalated) {
+		pinoLogger.info(`⬆️ Heranalyse uitgevoerd met ${prediction.model} wegens lage zekerheid.`);
+	}
+}
+
+export async function fetchUserPronosByMatchId(
+	settings: Settings,
+	api: PronotoolApiClient
+): Promise<Map<number, { homeScore: number; awayScore: number }>> {
+	try {
+		const authorization = await resolveApiAuthorization(settings);
+		const overview = await api.fetchUserOverview(authorization);
+		const byMatchId = new Map<number, { homeScore: number; awayScore: number }>();
+
+		for (const prono of overview.pronos || []) {
+			const matchId = Number(prono.matchId);
+			if (!Number.isInteger(matchId)) continue;
+			if (
+				prono.homeScore !== undefined &&
+				prono.awayScore !== undefined &&
+				prono.homeScore !== null &&
+				prono.awayScore !== null
+			) {
+				byMatchId.set(matchId, {
+					homeScore: Number(prono.homeScore),
+					awayScore: Number(prono.awayScore)
+				});
+			}
+		}
+
+		return byMatchId;
+	} catch {
+		return new Map();
+	}
+}
+
+export async function fetchAccuracyStats() {
+	const settings = getSettings();
+	const api = new PronotoolApiClient(settings);
+	const allMatches = await api.fetchMatches();
+	return computePredictionAccuracy(allMatches);
+}
+
+export async function runPredictSingle(match: MatchWithProno): Promise<Prediction | null> {
+	incrementActiveJobs();
+	const settings = getSettings();
+	const api = new PronotoolApiClient(settings);
+	const apiKey = process.env.GEMINI_API_KEY || '';
+
+	try {
+		pinoLogger.info(`🤖 Gemini voorspelt ${match.homeTeam} vs ${match.awayTeam}...`);
+		const predictions = await predictMatches(apiKey, [match], {
+			onDebug: (message) => pinoLogger.debug(message)
+		});
+		if (predictions.length === 0) {
+			pinoLogger.info('No prediction recieved, try again.');
+			return null;
+		}
+
+		const prediction = predictions[0];
+		logPredictionDetails(prediction);
+		pinoLogger.info(
+			`📤 Indienen: ${match.homeTeam} ${prediction.homeScore}-${prediction.awayScore} ${match.awayTeam}...`
+		);
+		await submitPredictions(api, settings, [prediction], new Map([[Number(match.matchId), match]]));
+		predictedMatchIds.add(Number(match.matchId));
+		invalidateUpcomingMatchesCache();
+		broadcastPredictionResult(prediction, match);
+		pinoLogger.info(`✅ Pronostiek ingediend voor ${match.homeTeam} vs ${match.awayTeam}.`);
+		return prediction;
+	} catch {
+		pinoLogger.info('No prediction recieved, try again.');
+		return null;
+	} finally {
+		decrementActiveJobs();
+	}
+}
+
+export async function runPredictUpcoming(): Promise<void> {
+	if (getPredictUpcomingRunning()) {
+		pinoLogger.debug('Skipping overlapping automatic prediction run.');
+		return;
+	}
+
+	setPredictUpcomingRunning(true);
+	incrementActiveJobs();
+	const settings = getSettings();
+	const api = new PronotoolApiClient(settings);
+	const apiKey = process.env.GEMINI_API_KEY || '';
+
+	try {
+		pinoLogger.debug('🤖 Automatische voorspelling gestart voor aankomende wedstrijden...');
+		const allMatches = await api.fetchMatches();
+		const accuracyStats = await reportPredictionAccuracy(allMatches, (message) =>
+			pinoLogger.info(message)
+		);
+		if (accuracyStats) {
+			broadcastSse({ type: 'accuracy', ...accuracyStats });
+		}
+		const userPronosByMatchId = await fetchUserPronosByMatchId(settings, api);
+		const now = new Date();
+
+		const matchesToPredict = attachCurrentPronos(
+			allMatches.filter((match) => {
+				const startTime = new Date(match.startTime);
+				const timeUntilMatch = startTime.getTime() - now.getTime();
+				const shouldPredict = timeUntilMatch > 0 && timeUntilMatch <= AUTO_PREDICT_WINDOW_MS;
+				if (!shouldPredict) return false;
+
+				const matchId = Number(match.matchId);
+				if (predictedMatchIds.has(matchId)) {
+					pinoLogger.debug(
+						`Skipping ${match.homeTeam} vs ${match.awayTeam}: already predicted in this session.`
+					);
+					return false;
+				}
+
+				return true;
+			}) as MatchWithProno[],
+			userPronosByMatchId
+		);
+
+		if (matchesToPredict.length === 0) {
+			pinoLogger.debug('🤷 Geen aankomende wedstrijden gevonden binnen 1 uur om te voorspellen.');
+			return;
+		}
+
+		const predictions = await predictMatches(apiKey, matchesToPredict, {
+			onDebug: (message) => pinoLogger.debug(message)
+		});
+
+		if (predictions.length === 0) {
+			pinoLogger.info('No prediction recieved, try again.');
+			return;
+		}
+
+		pinoLogger.info(`📤 Indienen van ${predictions.length} pronostieken...`);
+		const matchesById = new Map(matchesToPredict.map((m) => [Number(m.matchId), m]));
+		for (const prediction of predictions) {
+			const match = matchesById.get(Number(prediction.matchId));
+			if (match) {
+				logPredictionDetails(prediction, `${match.homeTeam} vs ${match.awayTeam}`);
+			}
+		}
+		await submitPredictions(api, settings, predictions, matchesById);
+		for (const prediction of predictions) {
+			predictedMatchIds.add(Number(prediction.matchId));
+			const match = matchesById.get(Number(prediction.matchId));
+			if (match) {
+				broadcastPredictionResult(prediction, match);
+			}
+		}
+		invalidateUpcomingMatchesCache();
+		pinoLogger.info('✅ Automatische voorspelling voltooid.');
+	} catch (err) {
+		pinoLogger.info(
+			`❌ Automatische voorspelling mislukt: ${err instanceof Error ? err.message : String(err)}`
+		);
+	} finally {
+		decrementActiveJobs();
+		setPredictUpcomingRunning(false);
+	}
+}
+
+export async function runAuthRefresh(): Promise<void> {
+	pinoLogger.info('🔑 Auth token vernieuwen...');
+	const settings = getSettings();
+	try {
+		await resolveApiAuthorization(settings, { forceRefresh: true });
+		pinoLogger.info('✅ Auth token vernieuwd.');
+	} catch (err) {
+		pinoLogger.info(`❌ Auth fout: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
