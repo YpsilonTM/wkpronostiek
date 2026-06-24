@@ -34,7 +34,11 @@ export async function logPrediction(prediction, match) {
 
 function isFinishedMatch(match) {
     const status = String(match.status || "").toLowerCase();
-    return status.includes("finished") || status.includes("gespeeld") || status.includes("ended") || status.includes("closed");
+    return status === "end"
+        || status.includes("finished")
+        || status.includes("gespeeld")
+        || status.includes("ended")
+        || status.includes("closed");
 }
 
 function getActualScore(match) {
