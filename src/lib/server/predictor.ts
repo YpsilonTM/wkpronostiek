@@ -2,8 +2,8 @@ import { GoogleGenAI } from '@google/genai';
 import type { MatchWithProno } from '$lib/types/match';
 import type { Prediction, PredictMatchesOptions } from '$lib/types/prediction';
 
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-const ESCALATION_MODEL = process.env.GEMINI_ESCALATION_MODEL || 'gemini-2.5-pro';
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+const ESCALATION_MODEL = process.env.GEMINI_ESCALATION_MODEL || 'gemini-3.1-pro-preview';
 const REPAIR_MODEL = 'gemini-3.1-flash-lite';
 
 const SINGLE_PREDICTION_SCHEMA = {
