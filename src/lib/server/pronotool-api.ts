@@ -55,14 +55,19 @@ export class PronotoolApiClient {
 		return matchdays.flatMap((day: { matches?: unknown[]; name?: string }) =>
 			(Array.isArray(day.matches) ? day.matches : []).map((raw) => {
 				const m = raw as Record<string, unknown>;
+				const homeTeamRaw = m.homeTeam as { id?: number; name?: string } | null;
+				const awayTeamRaw = m.awayTeam as { id?: number; name?: string } | null;
+
 				return {
 				matchId: m.matchId as number | string,
 				startTime: m.startTime as string,
 				status: m.status as string,
 				phaseName: (m.phaseName as string) ?? null,
 				matchday: (m.name as string) ?? null,
-				homeTeam: (m.homeTeam as { name?: string })?.name ?? null,
-				awayTeam: (m.awayTeam as { name?: string })?.name ?? null,
+				homeTeam: homeTeamRaw?.name ?? null,
+				awayTeam: awayTeamRaw?.name ?? null,
+				homeTeamId: Number.isInteger(homeTeamRaw?.id) ? homeTeamRaw!.id! : null,
+				awayTeamId: Number.isInteger(awayTeamRaw?.id) ? awayTeamRaw!.id! : null,
 				homeScore: Number.isInteger((m.homeTeam as { score?: number })?.score)
 					? ((m.homeTeam as { score: number }).score as number)
 					: Number.isInteger(m.homeScore)

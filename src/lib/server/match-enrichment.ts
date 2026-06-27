@@ -1,6 +1,10 @@
-import type { MatchWithProno } from '$lib/types/match';
+import type { Match, MatchWithProno } from '$lib/types/match';
 import { predictedMatchIds } from './app-state';
 import { AUTO_PREDICT_WINDOW_MS } from './config';
+
+export function areTeamsConfirmed(match: Pick<Match, 'homeTeamId' | 'awayTeamId'>): boolean {
+	return (match.homeTeamId ?? 0) > 0 && (match.awayTeamId ?? 0) > 0;
+}
 
 export function attachCurrentPronos(
 	matches: MatchWithProno[],
@@ -31,7 +35,8 @@ export function enrichMatchForUi(match: MatchWithProno) {
 		minutesUntilStart,
 		submitted,
 		autoPredictScheduled: inAutoWindow && !submitted,
-		autoPredictAt: new Date(startTime.getTime() - AUTO_PREDICT_WINDOW_MS).toISOString()
+		autoPredictAt: new Date(startTime.getTime() - AUTO_PREDICT_WINDOW_MS).toISOString(),
+		teamsConfirmed: areTeamsConfirmed(match)
 	};
 }
 

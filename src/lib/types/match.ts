@@ -6,6 +6,8 @@ export interface Match {
 	matchday: string | null;
 	homeTeam: string | null;
 	awayTeam: string | null;
+	homeTeamId: number | null;
+	awayTeamId: number | null;
 	homeScore: number | null;
 	awayScore: number | null;
 }
@@ -20,6 +22,7 @@ export interface EnrichedMatch extends MatchWithProno {
 	submitted: boolean;
 	autoPredictScheduled: boolean;
 	autoPredictAt: string;
+	teamsConfirmed: boolean;
 }
 
 export interface UserProno {

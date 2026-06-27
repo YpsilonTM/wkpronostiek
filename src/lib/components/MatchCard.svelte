@@ -55,10 +55,24 @@
 	);
 </script>
 
-<div class="match-card" class:predicting>
+<div
+	class="match-card"
+	class:predicting
+	class:teams-confirmed={match.teamsConfirmed}
+	class:teams-unconfirmed={!match.teamsConfirmed}
+>
 	<div class="match-header">
-		<div class="match-teams">{match.homeTeam} vs {match.awayTeam}</div>
+		<div class="match-teams" class:muted-teams={!match.teamsConfirmed}>
+			{match.homeTeam} vs {match.awayTeam}
+		</div>
 		<div class="chip-row">
+			{#if match.teamsConfirmed}
+				<span class="chip chip-teams-known" title="Beide teams zijn bekend">Teams bekend</span>
+			{:else}
+				<span class="chip chip-teams-unknown" title="Nog niet alle deelnemers zijn bekend"
+					>Nog onbekend</span
+				>
+			{/if}
 			{#if predicting}
 				<span class="chip chip-loading">Bezig…</span>
 			{:else if match.submitted}

@@ -227,6 +227,19 @@ button:disabled {
 	box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25);
 }
 
+.match-card.teams-confirmed {
+	border-left: 3px solid #22c55e;
+}
+
+.match-card.teams-unconfirmed {
+	border-style: dashed;
+	border-color: #475569;
+}
+
+.match-teams.muted-teams {
+	color: #94a3b8;
+}
+
 .match-header {
 	display: flex;
 	flex-direction: column;
@@ -274,6 +287,16 @@ button:disabled {
 }
 
 .chip-loading {
+	background: #422006;
+	color: #fdba74;
+}
+
+.chip-teams-known {
+	background: #14532d;
+	color: #86efac;
+}
+
+.chip-teams-unknown {
 	background: #422006;
 	color: #fdba74;
 }
