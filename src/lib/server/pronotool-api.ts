@@ -63,6 +63,7 @@ export class PronotoolApiClient {
 				startTime: m.startTime as string,
 				status: m.status as string,
 				phaseName: (m.phaseName as string) ?? null,
+				phaseType: (m.phaseType as string) ?? null,
 				matchday: (m.name as string) ?? null,
 				homeTeam: homeTeamRaw?.name ?? null,
 				awayTeam: awayTeamRaw?.name ?? null,
@@ -101,7 +102,7 @@ export class PronotoolApiClient {
 			modifiedTime: prono.modifiedTime ?? null,
 			homeScore: Number(prono.homeScore),
 			awayScore: Number(prono.awayScore),
-			shootoutWinner: null,
+			shootoutWinner: prono.shootoutWinner ?? null,
 			points: prono.points ?? null
 		}));
 

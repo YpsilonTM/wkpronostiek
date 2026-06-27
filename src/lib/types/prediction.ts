@@ -4,6 +4,7 @@ export interface Prediction {
 	awayTeam: string;
 	homeScore: number;
 	awayScore: number;
+	shootoutWinner: 0 | 1 | null;
 	reasoning: string;
 	searchAnalysis: string;
 	model?: string;
@@ -14,6 +15,7 @@ export interface PronoSubmission {
 	matchId: number | string;
 	homeScore: number;
 	awayScore: number;
+	shootoutWinner: 0 | 1 | null;
 	modifiedTime: string | null;
 	points: number | null;
 }

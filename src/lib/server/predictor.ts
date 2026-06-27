@@ -1,6 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import type { MatchWithProno } from '$lib/types/match';
 import type { Prediction, PredictMatchesOptions } from '$lib/types/prediction';
+import { isKnockoutMatch } from './match-enrichment';
 
 const DEFAULT_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
 const ESCALATION_MODEL = process.env.GEMINI_ESCALATION_MODEL || 'gemini-3.1-pro-preview';
@@ -19,6 +20,11 @@ const SINGLE_PREDICTION_SCHEMA = {
 		},
 		homeScore: { type: 'integer', minimum: 0, description: 'Predicted home goals after 90 minutes.' },
 		awayScore: { type: 'integer', minimum: 0, description: 'Predicted away goals after 90 minutes.' },
+		shootoutWinner: {
+			anyOf: [{ type: 'integer', enum: [0, 1] }, { type: 'null' }],
+			description:
+				'Penalty shootout winner when scores are tied after 90 minutes in knockout: 0 = home, 1 = away. Null otherwise.'
+		},
 		reasoning: {
 			type: 'string',
 			description: 'Short, 1-2 sentence final summary reasoning for the predicted score.'
@@ -108,6 +114,12 @@ function extractScorePair(text: string): { home: number; away: number } | null {
 	};
 }
 
+function parseShootoutWinner(value: unknown): 0 | 1 | null {
+	if (value === 0 || value === '0') return 0;
+	if (value === 1 || value === '1') return 1;
+	return null;
+}
+
 function normalizePrediction(parsed: Record<string, unknown>) {
 	if (!parsed || typeof parsed !== 'object') {
 		throw new Error('Gemini returned invalid structured output: expected an object.');
@@ -133,6 +145,7 @@ function normalizePrediction(parsed: Record<string, unknown>) {
 		awayTeam: String(parsed.awayTeam || '').trim(),
 		homeScore,
 		awayScore,
+		shootoutWinner: parseShootoutWinner(parsed.shootoutWinner),
 		reasoning: String(parsed.reasoning || '').trim(),
 		searchAnalysis: String(parsed.searchAnalysis || '').trim()
 	};
@@ -140,7 +153,8 @@ function normalizePrediction(parsed: Record<string, unknown>) {
 
 function validatePrediction(
 	prediction: ReturnType<typeof normalizePrediction>,
-	matchId: number
+	matchId: number,
+	match?: MatchWithProno
 ): void {
 	if (Number(prediction.matchId) !== matchId) {
 		throw new Error('Gemini returned a prediction for the wrong matchId.');
@@ -148,6 +162,15 @@ function validatePrediction(
 
 	if (!Number.isInteger(prediction.homeScore) || !Number.isInteger(prediction.awayScore)) {
 		throw new Error('Gemini returned invalid score values.');
+	}
+
+	const isDraw = prediction.homeScore === prediction.awayScore;
+	if (match && isKnockoutMatch(match) && isDraw) {
+		if (prediction.shootoutWinner !== 0 && prediction.shootoutWinner !== 1) {
+			throw new Error('Knockout draw requires shootoutWinner (0 or 1).');
+		}
+	} else if (prediction.shootoutWinner !== null) {
+		throw new Error('shootoutWinner must be null unless knockout ends in a draw.');
 	}
 }
 
@@ -190,6 +213,19 @@ function describePhaseContext(phaseName: string | null): string {
 	return 'Weeg de fase van het tornooi expliciet mee in je risico-inschatting en scoreverwachting.';
 }
 
+function buildKnockoutShootoutSection(match: MatchWithProno): string {
+	if (!isKnockoutMatch(match)) {
+		return '';
+	}
+
+	return `
+KNOCK-OUT REGEL (VERPLICHT):
+- Voorspel de stand na 90 minuten (reguliere speeltijd), niet na verlenging.
+- Bij een gelijke stand na 90 minuten moet je ook shootoutWinner invullen: 0 = thuisteam wint na strafschoppen, 1 = uitteam wint na strafschoppen.
+- Bij een ongelijke stand na 90 minuten: zet shootoutWinner op null.
+`;
+}
+
 function buildPrompt(match: MatchWithProno, todayStr: string): string {
 	const currentPronoSection = hasCurrentProno(match)
 		? `
@@ -209,7 +245,7 @@ Werk uiterst systematisch en stap-voor-stap. Gebruik Google Search actief om de 
 
 FASE-CONTEXT (${match.phaseName || 'onbekend'}):
 ${describePhaseContext(match.phaseName)}
-${currentPronoSection}
+${buildKnockoutShootoutSection(match)}${currentPronoSection}
 Voor deze match moet je een grondige analyse doen op basis van deze 5 pijlers:
 1) Lopende WK 2026 prestaties: Hoe hebben beide teams gepresteerd in hun voorgaande poule- of knock-outmatchen op DIT WK 2026 (punten, doelpunten, vertoond spel, tactiek)?
 2) Teamnieuws & Selectie: Blessures, schorsingen, fysieke paraatheid of mogelijke rotatie in de laatste 14 dagen voorafgaand aan ${todayStr}. Denk aan sleutelspelers die ontbreken.
@@ -225,7 +261,7 @@ REALISTISCHE SCORELIJNEN (BELANGRIJK):
 
 BELANGRIJK OUTPUTCONTRACT (STRIKT VOLGEN):
 - Return ALLEEN een geldig JSON object. Geen markdown, geen code fences, geen extra tekst.
-- Het object moet exact deze velden bevatten: matchId, homeTeam, awayTeam, searchAnalysis, homeScore, awayScore, reasoning.
+- Het object moet exact deze velden bevatten: matchId, homeTeam, awayTeam, searchAnalysis, homeScore, awayScore, shootoutWinner, reasoning.
 - Gebruik exact matchId ${match.matchId}, homeTeam "${match.homeTeam}" en awayTeam "${match.awayTeam}".
 - Scores moeten gehele getallen >= 0 zijn (alleen reguliere speeltijd na 90 minuten, GEEN verlengingen of strafschoppen).
 - In 'searchAnalysis': gedetailleerde analyse over de 5 pijlers (minimaal 4 zinnen) met concrete feiten uit je zoekopdracht.
@@ -281,6 +317,7 @@ async function parseAndValidatePrediction(
 	ai: GoogleGenAI,
 	rawText: string,
 	matchId: number,
+	match: MatchWithProno,
 	debug: (message: string) => void
 ) {
 	let parsed: Record<string, unknown>;
@@ -293,7 +330,7 @@ async function parseAndValidatePrediction(
 	}
 
 	const normalized = normalizePrediction(parsed);
-	validatePrediction(normalized, matchId);
+	validatePrediction(normalized, matchId, match);
 	return normalized;
 }
 
@@ -326,16 +363,20 @@ async function predictOneMatch(
 
 	try {
 		let rawText = await generatePrediction(ai, model, prompt, debug);
-		let prediction = await parseAndValidatePrediction(ai, rawText, matchId, debug);
+		let prediction = await parseAndValidatePrediction(ai, rawText, matchId, match, debug);
 
 		if (needsEscalation(prediction)) {
 			debug(`Low confidence detected, retrying with ${ESCALATION_MODEL}.`);
 			model = ESCALATION_MODEL;
 			const escalationPrompt = `${prompt}
 
-Extra instructie: je vorige analyse was te onzeker of te extreem. Wees grondiger in je zoekopdracht, wees conservatiever in je score, en kies de meest waarschijnlijke scorelijn.`.trim();
+Extra instructie: je vorige analyse was te onzeker of te extreem. Wees grondiger in je zoekopdracht, wees conservatiever in je score, en kies de meest waarschijnlijke scorelijn.${
+				isKnockoutMatch(match)
+					? ' Bij een gelijke stand na 90 minuten: geef ook shootoutWinner (0 of 1).'
+					: ''
+			}`.trim();
 			rawText = await generatePrediction(ai, model, escalationPrompt, debug);
-			prediction = await parseAndValidatePrediction(ai, rawText, matchId, debug);
+			prediction = await parseAndValidatePrediction(ai, rawText, matchId, match, debug);
 			return { ...prediction, escalated: true, model };
 		}
 

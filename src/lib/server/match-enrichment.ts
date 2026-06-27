@@ -6,6 +6,15 @@ export function areTeamsConfirmed(match: Pick<Match, 'homeTeamId' | 'awayTeamId'
 	return (match.homeTeamId ?? 0) > 0 && (match.awayTeamId ?? 0) > 0;
 }
 
+export function isKnockoutMatch(match: Pick<Match, 'phaseType' | 'phaseName'>): boolean {
+	if (match.phaseType === 'knockout') {
+		return true;
+	}
+
+	const phase = String(match.phaseName || '').toLowerCase();
+	return /finale|achtste|1\/16|1\/8|kwart|half|semi|quarter|round of 16|knockout/.test(phase);
+}
+
 export function attachCurrentPronos(
 	matches: MatchWithProno[],
 	userPronosByMatchId: Map<number, { homeScore: number; awayScore: number }>

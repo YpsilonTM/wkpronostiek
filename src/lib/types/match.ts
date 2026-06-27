@@ -3,6 +3,7 @@ export interface Match {
 	startTime: string;
 	status: string;
 	phaseName: string | null;
+	phaseType: string | null;
 	matchday: string | null;
 	homeTeam: string | null;
 	awayTeam: string | null;

@@ -12,7 +12,7 @@ import {
 	decrementActiveJobs,
 	invalidateUpcomingMatchesCache
 } from './app-state';
-import { attachCurrentPronos } from './match-enrichment';
+import { attachCurrentPronos, isKnockoutMatch } from './match-enrichment';
 import { AUTO_PREDICT_WINDOW_MS } from './config';
 import type { Match, MatchWithProno } from '$lib/types/match';
 import type { Prediction } from '$lib/types/prediction';
@@ -27,13 +27,22 @@ async function submitPredictions(
 	const authorization = await resolveApiAuthorization(settings);
 	await api.setPronos(
 		authorization,
-		predictions.map((p) => ({
-			matchId: p.matchId,
-			homeScore: p.homeScore,
-			awayScore: p.awayScore,
-			modifiedTime: null,
-			points: null
-		}))
+		predictions.map((p) => {
+			const match = matchesById.get(Number(p.matchId));
+			const isKnockoutDraw =
+				match &&
+				isKnockoutMatch(match) &&
+				p.homeScore === p.awayScore;
+
+			return {
+				matchId: p.matchId,
+				homeScore: p.homeScore,
+				awayScore: p.awayScore,
+				shootoutWinner: isKnockoutDraw ? p.shootoutWinner : null,
+				modifiedTime: null,
+				points: null
+			};
+		})
 	);
 
 	for (const prediction of predictions) {
@@ -42,6 +51,19 @@ async function submitPredictions(
 			await logPrediction(prediction, match);
 		}
 	}
+}
+
+function formatSubmissionScore(prediction: Prediction, match: Match): string {
+	const score = `${prediction.homeScore}-${prediction.awayScore}`;
+	if (
+		isKnockoutMatch(match) &&
+		prediction.homeScore === prediction.awayScore &&
+		(prediction.shootoutWinner === 0 || prediction.shootoutWinner === 1)
+	) {
+		const winner = prediction.shootoutWinner === 0 ? match.homeTeam : match.awayTeam;
+		return `${score} (${winner} wint na strafschoppen)`;
+	}
+	return score;
 }
 
 function broadcastPredictionResult(prediction: Prediction, match: Match): void {
@@ -126,7 +148,7 @@ export async function runPredictSingle(match: MatchWithProno): Promise<Predictio
 		const prediction = predictions[0];
 		logPredictionDetails(prediction);
 		pinoLogger.info(
-			`📤 Indienen: ${match.homeTeam} ${prediction.homeScore}-${prediction.awayScore} ${match.awayTeam}...`
+			`📤 Indienen: ${match.homeTeam} ${formatSubmissionScore(prediction, match)} ${match.awayTeam}...`
 		);
 		await submitPredictions(api, settings, [prediction], new Map([[Number(match.matchId), match]]));
 		predictedMatchIds.add(Number(match.matchId));
