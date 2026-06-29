@@ -6,6 +6,7 @@
 		homeScore?: number | null;
 		awayScore?: number | null;
 		reasoning?: string;
+		searchAnalysis?: string;
 	}
 
 	let {
@@ -46,7 +47,8 @@
 				predicting={predictingIds.has(Number(match.matchId))}
 				homeScore={overlay.homeScore}
 				awayScore={overlay.awayScore}
-				reasoning={overlay.reasoning}
+				reasoning={overlay.reasoning ?? match.reasoning ?? ''}
+				searchAnalysis={overlay.searchAnalysis ?? match.searchAnalysis ?? ''}
 				{onpredict}
 			/>
 		{/each}

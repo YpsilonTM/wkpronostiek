@@ -24,6 +24,8 @@ export interface EnrichedMatch extends MatchWithProno {
 	autoPredictScheduled: boolean;
 	autoPredictAt: string;
 	teamsConfirmed: boolean;
+	reasoning?: string;
+	searchAnalysis?: string;
 }
 
 export interface UserProno {

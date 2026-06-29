@@ -20,6 +20,8 @@ RUN bunx playwright install chromium --with-deps
 
 COPY . .
 
+RUN chmod +x scripts/docker-entrypoint.sh
+
 RUN bun --bun run build
 
 ENV DATA_DIR=/app/data
@@ -27,6 +29,7 @@ RUN mkdir -p /app/data
 
 EXPOSE 3000
 
+# Mount a volume here so wkpronostiek.db and legacy files survive container rebuilds.
 VOLUME ["/app/data"]
 
-CMD ["bun", "./build/index.js"]
+ENTRYPOINT ["/app/scripts/docker-entrypoint.sh"]

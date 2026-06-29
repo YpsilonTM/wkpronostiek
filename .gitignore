@@ -1,6 +1,8 @@
 .env
 .pronotool_auth.json
 .prediction_log.jsonl
+.prediction_log.jsonl.bak
+wkpronostiek.db
 data/
 node_modules/
 .svelte-kit/
@@ -9,3 +11,4 @@ bun.lockb
 __pycache__/
 /logs/
 scripts/node-auth-login.mjs
+src/generated/

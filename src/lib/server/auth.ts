@@ -1,52 +1,48 @@
-import fs from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { getAuthCachePath } from './config';
 import { captureAuthorizationWithPlaywright, normalizeAuthorization } from './auth-browser';
+import { prisma } from './db';
 import { PronotoolApiClient } from './pronotool-api';
 import type { Settings } from '$lib/types/settings';
-import type { AuthCachePayload } from '$lib/types/settings';
 
 export { normalizeAuthorization } from './auth-browser';
+
+const AUTH_TOKEN_ID = 'pronotool';
 
 export function getConfiguredAuthorization(settings: Settings): string | null {
 	const authorization = normalizeAuthorization(settings.pronotoolAuthorization);
 	return authorization || null;
 }
 
-export async function getCachedAuthorization(settings: Settings): Promise<string | null> {
-	const cachePath = getAuthCachePath(settings);
-
+export async function getCachedAuthorization(_settings: Settings): Promise<string | null> {
 	try {
-		const raw = await fs.readFile(cachePath, 'utf8');
-		const payload = JSON.parse(raw) as AuthCachePayload;
-		if (!payload || typeof payload !== 'object') {
+		const row = await prisma.authToken.findUnique({ where: { id: AUTH_TOKEN_ID } });
+		if (!row?.authorization) {
 			return null;
 		}
-		return normalizeAuthorization(payload.authorization || '') || null;
+		return normalizeAuthorization(row.authorization) || null;
 	} catch {
 		return null;
 	}
 }
 
 export async function storeCachedAuthorization(
-	settings: Settings,
+	_settings: Settings,
 	authorization: string
 ): Promise<void> {
-	const cachePath = getAuthCachePath(settings);
-	const payload: AuthCachePayload = {
-		authorization: normalizeAuthorization(authorization),
-		updated_at: new Date().toISOString()
-	};
-	await fs.writeFile(cachePath, JSON.stringify(payload, null, 2), 'utf8');
+	const normalized = normalizeAuthorization(authorization);
+	await prisma.authToken.upsert({
+		where: { id: AUTH_TOKEN_ID },
+		create: { id: AUTH_TOKEN_ID, authorization: normalized },
+		update: { authorization: normalized }
+	});
 }
 
-export async function clearCachedAuthorization(settings: Settings): Promise<void> {
-	const cachePath = getAuthCachePath(settings);
+export async function clearCachedAuthorization(_settings: Settings): Promise<void> {
 	try {
-		await fs.unlink(cachePath);
+		await prisma.authToken.delete({ where: { id: AUTH_TOKEN_ID } });
 	} catch {
-		// ignore
+		// ignore missing row
 	}
 }
 

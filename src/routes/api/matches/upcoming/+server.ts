@@ -4,6 +4,7 @@ import { getSettings } from '$lib/server/config';
 import { PronotoolApiClient } from '$lib/server/pronotool-api';
 import { fetchUserPronosByMatchId } from '$lib/server/jobs';
 import { getUpcomingMatches, enrichMatchForUi } from '$lib/server/match-enrichment';
+import { getLatestStoredPredictionsByMatchId } from '$lib/server/prediction-log';
 import { getUpcomingMatchesCache, getCacheTime, setUpcomingMatchesCache } from '$lib/server/app-state';
 import type { MatchWithProno } from '$lib/types/match';
 
@@ -32,6 +33,19 @@ export const GET: RequestHandler = async () => {
 		setUpcomingMatchesCache(cache);
 	}
 
-	const enriched = cache.map(enrichMatchForUi);
+	const storedPredictions = await getLatestStoredPredictionsByMatchId();
+
+	const enriched = cache.map((match) => {
+		const ui = enrichMatchForUi(match);
+		const stored = storedPredictions.get(Number(match.matchId));
+		if (!stored) {
+			return ui;
+		}
+		return {
+			...ui,
+			reasoning: stored.reasoning,
+			searchAnalysis: stored.searchAnalysis
+		};
+	});
 	return json(enriched);
 };

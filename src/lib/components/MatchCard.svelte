@@ -28,6 +28,7 @@
 		homeScore = null,
 		awayScore = null,
 		reasoning = '',
+		searchAnalysis = '',
 		onpredict
 	}: {
 		match: EnrichedMatch;
@@ -35,6 +36,7 @@
 		homeScore?: number | null;
 		awayScore?: number | null;
 		reasoning?: string;
+		searchAnalysis?: string;
 		onpredict?: (matchId: number) => void;
 	} = $props();
 
@@ -89,27 +91,45 @@
 		</div>
 		<div class="match-meta">{match.phaseName || ''} • {startTime}</div>
 	</div>
-	<div class="match-actions">
-		<div class="match-actions-left">
-			<div class="match-result">{scoreText}</div>
-			{#if predicting}
-				<div class="loading-msg">Bezig… (kan 1–2 min duren)</div>
-			{/if}
-			{#if reasoning}
-				<div class="match-reasoning"><strong>Analyse:</strong> {reasoning}</div>
-			{/if}
+	<div class="match-body">
+		<div class="match-score-row">
+			<div class="match-score-block">
+				<div class="match-result">{scoreText}</div>
+				{#if predicting}
+					<div class="loading-msg">Bezig… (kan 1–2 min duren)</div>
+				{/if}
+			</div>
+			<button
+				class="btn-primary"
+				type="button"
+				disabled={predicting}
+				onclick={() => onpredict?.(Number(match.matchId))}
+			>
+				{#if predicting}
+					<span class="spinner" aria-hidden="true"></span> Bezig…
+				{:else}
+					🔮 Voorspel
+				{/if}
+			</button>
 		</div>
-		<button
-			class="btn-primary"
-			type="button"
-			disabled={predicting}
-			onclick={() => onpredict?.(Number(match.matchId))}
-		>
-			{#if predicting}
-				<span class="spinner" aria-hidden="true"></span> Bezig…
-			{:else}
-				🔮 Voorspel
-			{/if}
-		</button>
+
+		{#if reasoning || searchAnalysis}
+			<details class="match-analysis-panel">
+				<summary class="match-analysis-summary">
+					<span class="match-analysis-summary-label">AI-analyse</span>
+					{#if reasoning}
+						<span class="match-analysis-preview">{reasoning}</span>
+					{/if}
+				</summary>
+				<div class="match-analysis-body">
+					{#if reasoning}
+						<div class="match-reasoning"><strong>Reden:</strong> {reasoning}</div>
+					{/if}
+					{#if searchAnalysis}
+						<div class="match-reasoning match-analysis"><strong>Analyse:</strong> {searchAnalysis}</div>
+					{/if}
+				</div>
+			</details>
+		{/if}
 	</div>
 </div>

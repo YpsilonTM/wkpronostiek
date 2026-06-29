@@ -15,7 +15,12 @@
 	let matchesError = $state('');
 	let accuracyStats = $state<AccuracyStats | null>(null);
 	let predictingIds = $state(new Set<number>());
-	let overlays = $state(new Map<number, { homeScore?: number; awayScore?: number; reasoning?: string }>());
+	let overlays = $state(
+		new Map<
+			number,
+			{ homeScore?: number; awayScore?: number; reasoning?: string; searchAnalysis?: string }
+		>()
+	);
 	let logPanel: LogPanelComponent | undefined = $state();
 
 	async function loadAccuracy() {
@@ -48,7 +53,8 @@
 		overlays = new Map(overlays).set(matchId, {
 			homeScore: data.homeScore,
 			awayScore: data.awayScore,
-			reasoning: data.reasoning || ''
+			reasoning: data.reasoning || '',
+			searchAnalysis: data.searchAnalysis || ''
 		});
 		matches = matches.map((m) =>
 			Number(m.matchId) === matchId
@@ -57,7 +63,9 @@
 						currentHomeScore: data.homeScore,
 						currentAwayScore: data.awayScore,
 						submitted: true,
-						autoPredictScheduled: false
+						autoPredictScheduled: false,
+						reasoning: data.reasoning || '',
+						searchAnalysis: data.searchAnalysis || ''
 					}
 				: m
 		);

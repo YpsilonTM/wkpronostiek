@@ -10,6 +10,15 @@ export function getDataDir(): string {
 	return dir ? path.resolve(dir) : process.cwd();
 }
 
+/** SQLite file URL; defaults to wkpronostiek.db inside getDataDir(). */
+export function getDatabaseUrl(): string {
+	const fromEnv = process.env.DATABASE_URL?.trim();
+	if (fromEnv) {
+		return fromEnv;
+	}
+	return `file:${path.join(getDataDir(), 'wkpronostiek.db')}`;
+}
+
 export function getDataPath(filename: string): string {
 	return path.join(getDataDir(), filename);
 }

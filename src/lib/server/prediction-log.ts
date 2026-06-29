@@ -1,37 +1,66 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
+import { prisma } from './db';
 import type { Match } from '$lib/types/match';
 import type { AccuracyStats, Prediction, PredictionLogEntry } from '$lib/types/prediction';
-import { getDataPath, ensureDataDir } from './config';
 
-const LOG_FILENAME = process.env.PREDICTION_LOG_FILE
-	? path.basename(process.env.PREDICTION_LOG_FILE)
-	: '.prediction_log.jsonl';
+export interface StoredPredictionSummary {
+	matchId: number;
+	homeScore: number;
+	awayScore: number;
+	reasoning: string;
+	searchAnalysis: string;
+	model: string | null;
+	escalated: boolean;
+	submittedAt: string;
+}
 
-function getLogPath(): string {
-	const file = process.env.PREDICTION_LOG_FILE || LOG_FILENAME;
-	if (path.isAbsolute(file)) {
-		return file;
+async function readLatestStoredPredictions(): Promise<Map<number, StoredPredictionSummary>> {
+	const rows = await prisma.prediction.findMany({
+		orderBy: [{ matchId: 'asc' }, { submittedAt: 'desc' }]
+	});
+
+	const latestByMatchId = new Map<number, StoredPredictionSummary>();
+	for (const row of rows) {
+		if (latestByMatchId.has(row.matchId)) {
+			continue;
+		}
+		latestByMatchId.set(row.matchId, {
+			matchId: row.matchId,
+			homeScore: row.homeScore,
+			awayScore: row.awayScore,
+			reasoning: row.reasoning,
+			searchAnalysis: row.searchAnalysis,
+			model: row.model,
+			escalated: row.escalated,
+			submittedAt: row.submittedAt.toISOString()
+		});
 	}
-	return getDataPath(path.basename(file));
+
+	return latestByMatchId;
+}
+
+export async function getLatestStoredPredictionsByMatchId(): Promise<
+	Map<number, StoredPredictionSummary>
+> {
+	return readLatestStoredPredictions();
 }
 
 export async function logPrediction(prediction: Prediction, match: Match): Promise<void> {
-	const entry: PredictionLogEntry = {
-		loggedAt: new Date().toISOString(),
-		matchId: Number(prediction.matchId),
-		homeTeam: match.homeTeam,
-		awayTeam: match.awayTeam,
-		phaseName: match.phaseName ?? null,
-		startTime: match.startTime ?? null,
-		predictedHome: prediction.homeScore,
-		predictedAway: prediction.awayScore,
-		model: prediction.model ?? null,
-		escalated: Boolean(prediction.escalated)
-	};
-
-	await ensureDataDir();
-	await fs.appendFile(getLogPath(), `${JSON.stringify(entry)}\n`, 'utf8');
+	await prisma.prediction.create({
+		data: {
+			matchId: Number(prediction.matchId),
+			homeTeam: match.homeTeam,
+			awayTeam: match.awayTeam,
+			phaseName: match.phaseName ?? null,
+			startTime: match.startTime ?? null,
+			homeScore: prediction.homeScore,
+			awayScore: prediction.awayScore,
+			shootoutWinner: prediction.shootoutWinner,
+			reasoning: prediction.reasoning || '',
+			searchAnalysis: prediction.searchAnalysis || '',
+			model: prediction.model ?? null,
+			escalated: Boolean(prediction.escalated)
+		}
+	});
 }
 
 function isFinishedMatch(match: Match): boolean {
@@ -60,21 +89,24 @@ function outcome(home: number, away: number): 'home' | 'away' | 'draw' {
 	return 'draw';
 }
 
-async function readLogEntries(): Promise<PredictionLogEntry[]> {
-	try {
-		const raw = await fs.readFile(getLogPath(), 'utf8');
-		return raw
-			.trim()
-			.split('\n')
-			.filter(Boolean)
-			.map((line) => JSON.parse(line) as PredictionLogEntry);
-	} catch {
-		return [];
-	}
+async function readLatestLogEntries(): Promise<PredictionLogEntry[]> {
+	const stored = await readLatestStoredPredictions();
+	return [...stored.values()].map((row) => ({
+		loggedAt: row.submittedAt,
+		matchId: row.matchId,
+		homeTeam: null,
+		awayTeam: null,
+		phaseName: null,
+		startTime: null,
+		predictedHome: row.homeScore,
+		predictedAway: row.awayScore,
+		model: row.model,
+		escalated: row.escalated
+	}));
 }
 
 export async function computePredictionAccuracy(allMatches: Match[]): Promise<AccuracyStats | null> {
-	const entries = await readLogEntries();
+	const entries = await readLatestLogEntries();
 	if (entries.length === 0) {
 		return null;
 	}

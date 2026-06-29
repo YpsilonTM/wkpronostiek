@@ -1,6 +1,7 @@
 import { building } from '$app/environment';
 import type { Handle, ServerInit } from '@sveltejs/kit';
 import { ensureDataDir } from '$lib/server/config';
+import { importLegacyDataIfNeeded, runDatabaseMigrations } from '$lib/server/migrate';
 import { startScheduler } from '$lib/server/scheduler';
 import { runPredictUpcoming } from '$lib/server/jobs';
 import { pinoLogger } from '$lib/server/logger';
@@ -8,6 +9,8 @@ import { pinoLogger } from '$lib/server/logger';
 export const init: ServerInit = async () => {
 	if (building) return;
 	await ensureDataDir();
+	await runDatabaseMigrations();
+	await importLegacyDataIfNeeded();
 	startScheduler();
 	runPredictUpcoming().catch(console.error);
 	pinoLogger.info(`🚀 Server gestart op poort ${process.env.PORT || 3000}`);
