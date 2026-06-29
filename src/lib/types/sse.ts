@@ -23,4 +23,14 @@ export interface SseAccuracyEvent extends AccuracyStats {
 	type: 'accuracy';
 }
 
-export type SseEvent = SseLogEvent | SsePredictionEvent | SseAccuracyEvent;
+export interface SsePredictionFailedEvent {
+	type: 'prediction-failed';
+	matchId: number;
+	reason?: string;
+}
+
+export type SseEvent =
+	| SseLogEvent
+	| SsePredictionEvent
+	| SsePredictionFailedEvent
+	| SseAccuracyEvent;

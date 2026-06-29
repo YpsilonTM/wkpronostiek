@@ -64,13 +64,34 @@
 		predictingIds = new Set([...predictingIds].filter((id) => id !== matchId));
 	}
 
+	function handlePredictionFailed(data: Extract<SseEvent, { type: 'prediction-failed' }>) {
+		const matchId = Number(data.matchId);
+		predictingIds = new Set([...predictingIds].filter((id) => id !== matchId));
+		const match = matches.find((m) => Number(m.matchId) === matchId);
+		const label = match ? `${match.homeTeam} vs ${match.awayTeam}` : `wedstrijd ${matchId}`;
+		logPanel?.addLog(
+			`❌ Voorspelling mislukt voor ${label}${data.reason ? `: ${data.reason}` : ''}`,
+			30
+		);
+	}
+
 	async function predictMatch(matchId: number) {
 		predictingIds = new Set([...predictingIds, matchId]);
 		try {
 			const res = await fetch(`/api/run/predict-match/${matchId}`, { method: 'POST' });
+			if (res.status === 202) {
+				return;
+			}
 			if (!res.ok) {
-				const errBody = await res.json().catch(() => ({}));
-				throw new Error((errBody as { error?: string }).error || 'Voorspelling mislukt.');
+				const text = await res.text();
+				let message = 'Voorspelling mislukt.';
+				try {
+					const errBody = JSON.parse(text) as { error?: string };
+					if (errBody.error) message = errBody.error;
+				} catch {
+					if (text) message = text;
+				}
+				throw new Error(message);
 			}
 			const result = await res.json();
 			applyPrediction({
@@ -142,6 +163,7 @@
 	bind:connectionStatus
 	onAccuracy={handleAccuracy}
 	onPrediction={applyPrediction}
+	onPredictionFailed={handlePredictionFailed}
 	onMatchesRefresh={loadMatches}
 />
 

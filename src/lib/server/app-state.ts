@@ -25,6 +25,19 @@ export function invalidateUpcomingMatchesCache(): void {
 
 let _predictUpcomingRunning = false;
 let _activeJobs = 0;
+const _inFlightPredictions = new Set<number>();
+
+export function isPredictionInFlight(matchId: number): boolean {
+	return _inFlightPredictions.has(matchId);
+}
+
+export function markPredictionInFlight(matchId: number): void {
+	_inFlightPredictions.add(matchId);
+}
+
+export function clearPredictionInFlight(matchId: number): void {
+	_inFlightPredictions.delete(matchId);
+}
 
 export function getPredictUpcomingRunning(): boolean {
 	return _predictUpcomingRunning;

@@ -19,11 +19,13 @@
 		connectionStatus = $bindable('Verbinden met log stream...'),
 		onAccuracy = () => {},
 		onPrediction = () => {},
+		onPredictionFailed = () => {},
 		onMatchesRefresh = () => {}
 	}: {
 		connectionStatus?: string;
 		onAccuracy?: (stats: AccuracyStats) => void;
 		onPrediction?: (data: Extract<SseEvent, { type: 'prediction' }>) => void;
+		onPredictionFailed?: (data: Extract<SseEvent, { type: 'prediction-failed' }>) => void;
 		onMatchesRefresh?: () => void;
 	} = $props();
 
@@ -86,6 +88,11 @@
 
 			if (data.type === 'prediction') {
 				onPrediction(data);
+				return;
+			}
+
+			if (data.type === 'prediction-failed') {
+				onPredictionFailed(data);
 				return;
 			}
 

@@ -10,7 +10,9 @@ import {
 	setPredictUpcomingRunning,
 	incrementActiveJobs,
 	decrementActiveJobs,
-	invalidateUpcomingMatchesCache
+	invalidateUpcomingMatchesCache,
+	markPredictionInFlight,
+	clearPredictionInFlight
 } from './app-state';
 import { attachCurrentPronos, isKnockoutMatch } from './match-enrichment';
 import { AUTO_PREDICT_WINDOW_MS } from './config';
@@ -81,6 +83,10 @@ function broadcastPredictionResult(prediction: Prediction, match: Match): void {
 	});
 }
 
+function broadcastPredictionFailed(matchId: number, reason?: string): void {
+	broadcastSse({ type: 'prediction-failed', matchId, reason });
+}
+
 function logPredictionDetails(prediction: Prediction, matchLabel?: string): void {
 	pinoLogger.info(`🧠 Reden${matchLabel ? ` voor ${matchLabel}` : ''}: ${prediction.reasoning}`);
 	if (prediction.searchAnalysis) {
@@ -130,7 +136,9 @@ export async function fetchAccuracyStats() {
 }
 
 export async function runPredictSingle(match: MatchWithProno): Promise<Prediction | null> {
+	const matchId = Number(match.matchId);
 	incrementActiveJobs();
+	markPredictionInFlight(matchId);
 	const settings = getSettings();
 	const api = new PronotoolApiClient(settings);
 	const apiKey = process.env.GEMINI_API_KEY || '';
@@ -142,6 +150,7 @@ export async function runPredictSingle(match: MatchWithProno): Promise<Predictio
 		});
 		if (predictions.length === 0) {
 			pinoLogger.info('No prediction recieved, try again.');
+			broadcastPredictionFailed(matchId, 'Geen voorspelling ontvangen');
 			return null;
 		}
 
@@ -150,16 +159,21 @@ export async function runPredictSingle(match: MatchWithProno): Promise<Predictio
 		pinoLogger.info(
 			`📤 Indienen: ${match.homeTeam} ${formatSubmissionScore(prediction, match)} ${match.awayTeam}...`
 		);
-		await submitPredictions(api, settings, [prediction], new Map([[Number(match.matchId), match]]));
-		predictedMatchIds.add(Number(match.matchId));
+		await submitPredictions(api, settings, [prediction], new Map([[matchId, match]]));
+		predictedMatchIds.add(matchId);
 		invalidateUpcomingMatchesCache();
 		broadcastPredictionResult(prediction, match);
 		pinoLogger.info(`✅ Pronostiek ingediend voor ${match.homeTeam} vs ${match.awayTeam}.`);
 		return prediction;
-	} catch {
+	} catch (err) {
 		pinoLogger.info('No prediction recieved, try again.');
+		broadcastPredictionFailed(
+			matchId,
+			err instanceof Error ? err.message : 'Onbekende fout'
+		);
 		return null;
 	} finally {
+		clearPredictionInFlight(matchId);
 		decrementActiveJobs();
 	}
 }

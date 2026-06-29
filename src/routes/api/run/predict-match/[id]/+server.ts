@@ -1,34 +1,38 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { runPredictSingle } from '$lib/server/jobs';
-import { getUpcomingMatchesCache, invalidateUpcomingMatchesCache } from '$lib/server/app-state';
+import {
+	getUpcomingMatchesCache,
+	invalidateUpcomingMatchesCache,
+	isPredictionInFlight
+} from '$lib/server/app-state';
 
 export const POST: RequestHandler = async ({ params }) => {
 	const matchId = Number(params.id);
 	if (Number.isNaN(matchId)) {
-		return new Response('Invalid matchId', { status: 400 });
+		return json({ error: 'Ongeldige wedstrijd-id' }, { status: 400 });
 	}
 
 	const cache = getUpcomingMatchesCache();
 	if (!cache) {
-		return new Response('Match cache not ready, please refresh', { status: 409 });
+		return json({ error: 'Wedstrijden nog niet geladen, ververs de pagina' }, { status: 409 });
 	}
 
 	const match = cache.find((m) => Number(m.matchId) === matchId);
 	if (!match) {
-		return new Response('Match not found or not upcoming', { status: 404 });
+		return json({ error: 'Wedstrijd niet gevonden of niet meer aankomend' }, { status: 404 });
 	}
 
 	if (new Date(match.startTime) <= new Date()) {
 		invalidateUpcomingMatchesCache();
-		return new Response('Match has already started', { status: 409 });
+		return json({ error: 'Wedstrijd is al begonnen' }, { status: 409 });
 	}
 
-	const prediction = await runPredictSingle(match);
-
-	if (!prediction) {
-		return json({ error: 'Prediction failed' }, { status: 500 });
+	if (isPredictionInFlight(matchId)) {
+		return json({ status: 'accepted', matchId, alreadyRunning: true }, { status: 202 });
 	}
 
-	return json(prediction);
+	void runPredictSingle(match);
+
+	return json({ status: 'accepted', matchId }, { status: 202 });
 };
