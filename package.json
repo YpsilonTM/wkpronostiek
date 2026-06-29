@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "bun --bun run vite dev",
-    "build": "bunx --bun prisma generate && bun --bun run vite build && bun run build:auth-helper",
+    "build": "svelte-kit sync && bunx --bun prisma generate && bun --bun run vite build && bun run build:auth-helper",
     "build:auth-helper": "bun build scripts/node-auth-login.ts --outfile scripts/node-auth-login.mjs --target node --format esm --external playwright",
     "preview": "bun --bun run vite preview",
     "start": "bun ./build/index.js",
