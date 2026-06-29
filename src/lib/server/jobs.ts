@@ -223,7 +223,7 @@ export async function runPredictUpcoming(): Promise<void> {
 		);
 
 		if (matchesToPredict.length === 0) {
-			pinoLogger.debug('🤷 Geen aankomende wedstrijden gevonden binnen 1 uur om te voorspellen.');
+			pinoLogger.debug('🤷 Geen aankomende wedstrijden gevonden binnen 20 min om te voorspellen.');
 			return;
 		}
 

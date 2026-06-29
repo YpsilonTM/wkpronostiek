@@ -155,7 +155,7 @@
 </script>
 
 <h1>⚽ WK Pronostiek</h1>
-<p class="subtitle">Automatische run 1 uur voor aanvang van elke wedstrijd</p>
+<p class="subtitle">Automatische run 20 min voor aanvang van elke wedstrijd</p>
 
 <div class="top-controls">
 	<button class="btn-secondary" type="button" disabled={authBusy} onclick={triggerAuthRefresh}>

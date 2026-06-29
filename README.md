@@ -6,7 +6,7 @@ SvelteKit + TypeScript app die WK Pronostiek automatiseert: Sporza API, Gemini A
 
 - Haalt aankomende wedstrijden op via de Sporza API
 - Voorspelt scores met Google Gemini (inclusief escalatie naar Pro bij lage zekerheid)
-- Dient pronostieken automatisch in 1 uur voor aanvang (cron elke 5 minuten)
+- Dient pronostieken automatisch in 20 min voor aanvang (cron elke 5 minuten)
 - Toont live logs, accuratesse en handmatige voorspel-knoppen in een Svelte dashboard
 - Gebruikt bearer token uit `.env`, lokale cache, of Playwright login als fallback
 

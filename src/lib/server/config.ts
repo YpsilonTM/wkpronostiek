@@ -54,4 +54,4 @@ export function getAuthCachePath(settings: Settings): string {
 	return getDataPath(path.basename(file));
 }
 
-export const AUTO_PREDICT_WINDOW_MS = 60 * 60 * 1000;
+export const AUTO_PREDICT_WINDOW_MS = 20 * 60 * 1000;
