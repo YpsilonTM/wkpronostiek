@@ -1,5 +1,5 @@
 import type { Match, MatchWithProno } from '$lib/types/match';
-import { predictedMatchIds } from './app-state';
+import { autoPredictedMatchIds } from './app-state';
 import { AUTO_PREDICT_WINDOW_MS } from './config';
 
 export function areTeamsConfirmed(match: Pick<Match, 'homeTeamId' | 'awayTeamId'>): boolean {
@@ -35,15 +35,15 @@ export function enrichMatchForUi(match: MatchWithProno) {
 	const minutesUntilStart = Math.max(0, Math.floor(msUntil / 60_000));
 	const hasProno =
 		Number.isInteger(match.currentHomeScore) && Number.isInteger(match.currentAwayScore);
-	const sessionPredicted = predictedMatchIds.has(Number(match.matchId));
-	const submitted = hasProno || sessionPredicted;
+	const autoPredictedInSession = autoPredictedMatchIds.has(Number(match.matchId));
+	const submitted = hasProno || autoPredictedInSession;
 	const inAutoWindow = msUntil > 0 && msUntil <= AUTO_PREDICT_WINDOW_MS;
 
 	return {
 		...match,
 		minutesUntilStart,
 		submitted,
-		autoPredictScheduled: inAutoWindow && !submitted,
+		autoPredictScheduled: inAutoWindow && !autoPredictedInSession,
 		autoPredictAt: new Date(startTime.getTime() - AUTO_PREDICT_WINDOW_MS).toISOString(),
 		teamsConfirmed: areTeamsConfirmed(match)
 	};

@@ -79,7 +79,8 @@
 				<span class="chip chip-loading">Bezig…</span>
 			{:else if match.submitted}
 				<span class="chip chip-done">Ingediend</span>
-			{:else if match.autoPredictScheduled}
+			{/if}
+			{#if !predicting && match.autoPredictScheduled}
 				<span class="chip chip-auto">Auto gepland</span>
 			{/if}
 			{#if !predicting && match.minutesUntilStart != null}

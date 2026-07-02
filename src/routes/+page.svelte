@@ -8,6 +8,13 @@
 	import type LogPanelComponent from '$lib/components/LogPanel.svelte';
 	import type { SseEvent } from '$lib/types/sse';
 
+	const AUTO_PREDICT_WINDOW_MS = 20 * 60 * 1000;
+
+	function isInAutoPredictWindow(startTime: string): boolean {
+		const msUntil = new Date(startTime).getTime() - Date.now();
+		return msUntil > 0 && msUntil <= AUTO_PREDICT_WINDOW_MS;
+	}
+
 	let connectionStatus = $state('Verbinden met log stream...');
 	let authBusy = $state(false);
 	let matches = $state<EnrichedMatch[]>([]);
@@ -63,7 +70,9 @@
 						currentHomeScore: data.homeScore,
 						currentAwayScore: data.awayScore,
 						submitted: true,
-						autoPredictScheduled: false,
+						autoPredictScheduled: data.autoPredicted
+							? false
+							: isInAutoPredictWindow(m.startTime),
 						reasoning: data.reasoning || '',
 						searchAnalysis: data.searchAnalysis || ''
 					}
@@ -112,7 +121,8 @@
 				reasoning: result.reasoning || '',
 				searchAnalysis: result.searchAnalysis || '',
 				model: result.model || null,
-				escalated: Boolean(result.escalated)
+				escalated: Boolean(result.escalated),
+				autoPredicted: false
 			});
 		} catch (err) {
 			predictingIds = new Set([...predictingIds].filter((id) => id !== matchId));

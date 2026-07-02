@@ -1,6 +1,7 @@
 import type { MatchWithProno } from '$lib/types/match';
 
-export const predictedMatchIds = new Set<number>();
+/** Match IDs auto-predicted this session; manual predictions are not tracked here. */
+export const autoPredictedMatchIds = new Set<number>();
 
 let _upcomingMatchesCache: MatchWithProno[] | null = null;
 let _cacheTime = 0;

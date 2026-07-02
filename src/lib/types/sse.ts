@@ -17,6 +17,7 @@ export interface SsePredictionEvent {
 	searchAnalysis: string;
 	model: string | null;
 	escalated: boolean;
+	autoPredicted: boolean;
 }
 
 export interface SseAccuracyEvent extends AccuracyStats {

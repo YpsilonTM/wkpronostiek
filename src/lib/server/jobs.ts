@@ -5,7 +5,7 @@ import { predictMatches } from './predictor';
 import { logPrediction, reportPredictionAccuracy, computePredictionAccuracy } from './prediction-log';
 import { pinoLogger, broadcastSse } from './logger';
 import {
-	predictedMatchIds,
+	autoPredictedMatchIds,
 	getPredictUpcomingRunning,
 	setPredictUpcomingRunning,
 	incrementActiveJobs,
@@ -68,7 +68,11 @@ function formatSubmissionScore(prediction: Prediction, match: Match): string {
 	return score;
 }
 
-function broadcastPredictionResult(prediction: Prediction, match: Match): void {
+function broadcastPredictionResult(
+	prediction: Prediction,
+	match: Match,
+	autoPredicted: boolean
+): void {
 	broadcastSse({
 		type: 'prediction',
 		matchId: Number(prediction.matchId),
@@ -79,7 +83,8 @@ function broadcastPredictionResult(prediction: Prediction, match: Match): void {
 		reasoning: prediction.reasoning || '',
 		searchAnalysis: prediction.searchAnalysis || '',
 		model: prediction.model || null,
-		escalated: Boolean(prediction.escalated)
+		escalated: Boolean(prediction.escalated),
+		autoPredicted
 	});
 }
 
@@ -160,9 +165,8 @@ export async function runPredictSingle(match: MatchWithProno): Promise<Predictio
 			`📤 Indienen: ${match.homeTeam} ${formatSubmissionScore(prediction, match)} ${match.awayTeam}...`
 		);
 		await submitPredictions(api, settings, [prediction], new Map([[matchId, match]]));
-		predictedMatchIds.add(matchId);
 		invalidateUpcomingMatchesCache();
-		broadcastPredictionResult(prediction, match);
+		broadcastPredictionResult(prediction, match, false);
 		pinoLogger.info(`✅ Pronostiek ingediend voor ${match.homeTeam} vs ${match.awayTeam}.`);
 		return prediction;
 	} catch (err) {
@@ -210,9 +214,9 @@ export async function runPredictUpcoming(): Promise<void> {
 				if (!shouldPredict) return false;
 
 				const matchId = Number(match.matchId);
-				if (predictedMatchIds.has(matchId)) {
+				if (autoPredictedMatchIds.has(matchId)) {
 					pinoLogger.debug(
-						`Skipping ${match.homeTeam} vs ${match.awayTeam}: already predicted in this session.`
+						`Skipping ${match.homeTeam} vs ${match.awayTeam}: already auto-predicted in this session.`
 					);
 					return false;
 				}
@@ -246,10 +250,10 @@ export async function runPredictUpcoming(): Promise<void> {
 		}
 		await submitPredictions(api, settings, predictions, matchesById);
 		for (const prediction of predictions) {
-			predictedMatchIds.add(Number(prediction.matchId));
+			autoPredictedMatchIds.add(Number(prediction.matchId));
 			const match = matchesById.get(Number(prediction.matchId));
 			if (match) {
-				broadcastPredictionResult(prediction, match);
+				broadcastPredictionResult(prediction, match, true);
 			}
 		}
 		invalidateUpcomingMatchesCache();

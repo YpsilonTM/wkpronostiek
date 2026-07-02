@@ -5,7 +5,7 @@
 	const CRON_NOISE_PATTERNS = [
 		/geen aankomende wedstrijden gevonden/i,
 		/skipping overlapping automatic prediction/i,
-		/skipping .+: already predicted in this session/i
+		/skipping .+: already auto-predicted in this session/i
 	];
 
 	interface LogLine {
