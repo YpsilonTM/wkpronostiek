@@ -18,7 +18,7 @@ export function broadcastSse(data: SseEvent): void {
 
 const prettyStream = pretty({
 	colorize: true,
-	ignore: 'pid,hostname'
+	ignore: 'pid,hostname',
 });
 
 const customStream = {
@@ -37,12 +37,12 @@ const customStream = {
 				broadcastSse({ type: 'log', level: 30, message: fallback });
 			}
 		}
-	}
+	},
 };
 
 export const pinoLogger = pino(
 	{
-		level: process.env.NODE_ENV === 'production' ? 'info' : 'debug'
+		level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
 	},
-	customStream
+	customStream,
 );

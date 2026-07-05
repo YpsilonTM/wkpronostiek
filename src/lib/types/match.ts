@@ -1,5 +1,5 @@
 export interface Match {
-	matchId: number | string;
+	matchId: number;
 	startTime: string;
 	status: string;
 	phaseName: string | null;
@@ -28,16 +28,14 @@ export interface EnrichedMatch extends MatchWithProno {
 	searchAnalysis?: string;
 }
 
+export interface UserOverview {
+	pronos: UserProno[];
+}
+
 export interface UserProno {
-	matchId: string;
+	matchId: number;
 	homeScore: number | null;
 	awayScore: number | null;
 	modifiedTime: string | null;
 	points: number | null;
-}
-
-export interface UserOverview {
-	pronos: UserProno[];
-	userName: string | null;
-	groupNames: string[];
 }

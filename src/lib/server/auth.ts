@@ -1,20 +1,18 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
+import type { Settings } from '$lib/types/settings';
 import { captureAuthorizationWithPlaywright, normalizeAuthorization } from './auth-browser';
 import { prisma } from './db';
 import { PronotoolApiClient } from './pronotool-api';
-import type { Settings } from '$lib/types/settings';
-
-export { normalizeAuthorization } from './auth-browser';
 
 const AUTH_TOKEN_ID = 'pronotool';
 
-export function getConfiguredAuthorization(settings: Settings): string | null {
+function getConfiguredAuthorization(settings: Settings): string | null {
 	const authorization = normalizeAuthorization(settings.pronotoolAuthorization);
 	return authorization || null;
 }
 
-export async function getCachedAuthorization(_settings: Settings): Promise<string | null> {
+async function getCachedAuthorization(_settings: Settings): Promise<string | null> {
 	try {
 		const row = await prisma.authToken.findUnique({ where: { id: AUTH_TOKEN_ID } });
 		if (!row?.authorization) {
@@ -26,19 +24,16 @@ export async function getCachedAuthorization(_settings: Settings): Promise<strin
 	}
 }
 
-export async function storeCachedAuthorization(
-	_settings: Settings,
-	authorization: string
-): Promise<void> {
+async function storeCachedAuthorization(_settings: Settings, authorization: string): Promise<void> {
 	const normalized = normalizeAuthorization(authorization);
 	await prisma.authToken.upsert({
 		where: { id: AUTH_TOKEN_ID },
 		create: { id: AUTH_TOKEN_ID, authorization: normalized },
-		update: { authorization: normalized }
+		update: { authorization: normalized },
 	});
 }
 
-export async function clearCachedAuthorization(_settings: Settings): Promise<void> {
+async function clearCachedAuthorization(_settings: Settings): Promise<void> {
 	try {
 		await prisma.authToken.delete({ where: { id: AUTH_TOKEN_ID } });
 	} catch {
@@ -48,7 +43,7 @@ export async function clearCachedAuthorization(_settings: Settings): Promise<voi
 
 async function resolveValidAuthorization(
 	settings: Settings,
-	candidates: (string | null | undefined)[]
+	candidates: (string | null | undefined)[],
 ): Promise<string | null> {
 	const api = new PronotoolApiClient(settings);
 
@@ -73,9 +68,9 @@ async function loginViaNodeHelper(settings: Settings): Promise<string> {
 			cwd: process.cwd(),
 			env: {
 				...process.env,
-				WKP_SETTINGS_JSON: JSON.stringify(settings)
+				WKP_SETTINGS_JSON: JSON.stringify(settings),
 			},
-			stdio: ['ignore', 'pipe', 'pipe']
+			stdio: ['ignore', 'pipe', 'pipe'],
 		});
 
 		let stdout = '';
@@ -102,8 +97,8 @@ async function loginViaNodeHelper(settings: Settings): Promise<string> {
 		child.on('close', (code) => {
 			clearTimeout(timeout);
 			if (code !== 0) {
-				const message = stderr.trim() || `Node auth helper failed with exit code ${code}`;
-				reject(new Error(message));
+				// Do not include stderr in error message — may contain sensitive auth details.
+				reject(new Error(`Node auth helper failed with exit code ${code}`));
 				return;
 			}
 
@@ -118,7 +113,7 @@ async function loginViaNodeHelper(settings: Settings): Promise<string> {
 	});
 }
 
-export async function loginAndCaptureAuthorization(settings: Settings): Promise<string> {
+async function loginAndCaptureAuthorization(settings: Settings): Promise<string> {
 	if (typeof Bun !== 'undefined') {
 		return await loginViaNodeHelper(settings);
 	}
@@ -127,7 +122,7 @@ export async function loginAndCaptureAuthorization(settings: Settings): Promise<
 
 export async function resolveApiAuthorization(
 	settings: Settings,
-	options: { forceRefresh?: boolean } = {}
+	options: { forceRefresh?: boolean } = {},
 ): Promise<string> {
 	const forceRefresh = Boolean(options.forceRefresh);
 

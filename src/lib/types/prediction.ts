@@ -12,7 +12,7 @@ export interface Prediction {
 }
 
 export interface PronoSubmission {
-	matchId: number | string;
+	matchId: number;
 	homeScore: number;
 	awayScore: number;
 	shootoutWinner: 0 | 1 | null;

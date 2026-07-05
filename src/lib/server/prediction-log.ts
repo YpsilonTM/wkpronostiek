@@ -1,8 +1,8 @@
-import { prisma } from './db';
 import type { Match } from '$lib/types/match';
 import type { AccuracyStats, Prediction, PredictionLogEntry } from '$lib/types/prediction';
+import { prisma } from './db';
 
-export interface StoredPredictionSummary {
+interface StoredPredictionSummary {
 	matchId: number;
 	homeScore: number;
 	awayScore: number;
@@ -11,18 +11,41 @@ export interface StoredPredictionSummary {
 	model: string | null;
 	escalated: boolean;
 	submittedAt: string;
+	homeTeam: string | null;
+	awayTeam: string | null;
+	phaseName: string | null;
+	startTime: string | null;
 }
 
 async function readLatestStoredPredictions(): Promise<Map<number, StoredPredictionSummary>> {
-	const rows = await prisma.prediction.findMany({
-		orderBy: [{ matchId: 'asc' }, { submittedAt: 'desc' }]
-	});
+	const rows = await prisma.$queryRaw<
+		Array<{
+			matchId: number;
+			homeScore: number;
+			awayScore: number;
+			reasoning: string;
+			searchAnalysis: string;
+			model: string | null;
+			escalated: number;
+			submittedAt: Date;
+			homeTeam: string | null;
+			awayTeam: string | null;
+			phaseName: string | null;
+			startTime: string | null;
+		}>
+	>`
+		SELECT p.matchId, p.homeScore, p.awayScore, p.reasoning, p.searchAnalysis,
+			p.model, p.escalated, p.submittedAt, p.homeTeam, p.awayTeam, p.phaseName, p.startTime
+		FROM Prediction p
+		INNER JOIN (
+			SELECT matchId, MAX(submittedAt) AS maxSubmitted
+			FROM Prediction
+			GROUP BY matchId
+		) latest ON p.matchId = latest.matchId AND p.submittedAt = latest.maxSubmitted
+	`;
 
 	const latestByMatchId = new Map<number, StoredPredictionSummary>();
 	for (const row of rows) {
-		if (latestByMatchId.has(row.matchId)) {
-			continue;
-		}
 		latestByMatchId.set(row.matchId, {
 			matchId: row.matchId,
 			homeScore: row.homeScore,
@@ -30,8 +53,12 @@ async function readLatestStoredPredictions(): Promise<Map<number, StoredPredicti
 			reasoning: row.reasoning,
 			searchAnalysis: row.searchAnalysis,
 			model: row.model,
-			escalated: row.escalated,
-			submittedAt: row.submittedAt.toISOString()
+			escalated: Boolean(row.escalated),
+			submittedAt: row.submittedAt.toISOString(),
+			homeTeam: row.homeTeam,
+			awayTeam: row.awayTeam,
+			phaseName: row.phaseName,
+			startTime: row.startTime,
 		});
 	}
 
@@ -47,7 +74,7 @@ export async function getLatestStoredPredictionsByMatchId(): Promise<
 export async function logPrediction(prediction: Prediction, match: Match): Promise<void> {
 	await prisma.prediction.create({
 		data: {
-			matchId: Number(prediction.matchId),
+			matchId: prediction.matchId,
 			homeTeam: match.homeTeam,
 			awayTeam: match.awayTeam,
 			phaseName: match.phaseName ?? null,
@@ -58,8 +85,8 @@ export async function logPrediction(prediction: Prediction, match: Match): Promi
 			reasoning: prediction.reasoning || '',
 			searchAnalysis: prediction.searchAnalysis || '',
 			model: prediction.model ?? null,
-			escalated: Boolean(prediction.escalated)
-		}
+			escalated: Boolean(prediction.escalated),
+		},
 	});
 }
 
@@ -94,18 +121,20 @@ async function readLatestLogEntries(): Promise<PredictionLogEntry[]> {
 	return [...stored.values()].map((row) => ({
 		loggedAt: row.submittedAt,
 		matchId: row.matchId,
-		homeTeam: null,
-		awayTeam: null,
-		phaseName: null,
-		startTime: null,
+		homeTeam: row.homeTeam,
+		awayTeam: row.awayTeam,
+		phaseName: row.phaseName,
+		startTime: row.startTime,
 		predictedHome: row.homeScore,
 		predictedAway: row.awayScore,
 		model: row.model,
-		escalated: row.escalated
+		escalated: row.escalated,
 	}));
 }
 
-export async function computePredictionAccuracy(allMatches: Match[]): Promise<AccuracyStats | null> {
+export async function computePredictionAccuracy(
+	allMatches: Match[],
+): Promise<AccuracyStats | null> {
 	const entries = await readLatestLogEntries();
 	if (entries.length === 0) {
 		return null;
@@ -113,7 +142,7 @@ export async function computePredictionAccuracy(allMatches: Match[]): Promise<Ac
 
 	const latestByMatchId = new Map<number, PredictionLogEntry>();
 	for (const entry of entries) {
-		latestByMatchId.set(Number(entry.matchId), entry);
+		latestByMatchId.set(entry.matchId, entry);
 	}
 
 	let evaluated = 0;
@@ -126,7 +155,7 @@ export async function computePredictionAccuracy(allMatches: Match[]): Promise<Ac
 		const actual = getActualScore(match);
 		if (!actual) continue;
 
-		const predicted = latestByMatchId.get(Number(match.matchId));
+		const predicted = latestByMatchId.get(match.matchId);
 		if (!predicted) continue;
 
 		evaluated += 1;
@@ -134,7 +163,8 @@ export async function computePredictionAccuracy(allMatches: Match[]): Promise<Ac
 			exactHits += 1;
 		}
 		if (
-			outcome(predicted.predictedHome, predicted.predictedAway) === outcome(actual.home, actual.away)
+			outcome(predicted.predictedHome, predicted.predictedAway) ===
+			outcome(actual.home, actual.away)
 		) {
 			outcomeHits += 1;
 		}
@@ -152,7 +182,7 @@ export async function computePredictionAccuracy(allMatches: Match[]): Promise<Ac
 
 export async function reportPredictionAccuracy(
 	allMatches: Match[],
-	logFn?: (message: string) => void
+	logFn?: (message: string) => void,
 ): Promise<AccuracyStats | null> {
 	const stats = await computePredictionAccuracy(allMatches);
 	if (!stats || typeof logFn !== 'function') {
@@ -160,7 +190,7 @@ export async function reportPredictionAccuracy(
 	}
 
 	logFn(
-		`📊 Pronostiek-accuratesse: ${stats.exactHits}/${stats.evaluated} exact (${stats.exactPct}%), ${stats.outcomeHits}/${stats.evaluated} juiste uitslag (${stats.outcomePct}%)`
+		`📊 Pronostiek-accuratesse: ${stats.exactHits}/${stats.evaluated} exact (${stats.exactPct}%), ${stats.outcomeHits}/${stats.evaluated} juiste uitslag (${stats.outcomePct}%)`,
 	);
 	return stats;
 }

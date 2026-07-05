@@ -1,9 +1,9 @@
+import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import type { PredictionLogEntry } from '$lib/types/prediction';
 import type { AuthCachePayload } from '$lib/types/settings';
-import { getAuthCachePath, getDataPath, getSettings, ensureDataDir } from './config';
+import { ensureDataDir, getAuthCachePath, getDataPath, getSettings } from './config';
 import { getDatabaseUrl, prisma } from './db';
 import { pinoLogger } from './logger';
 
@@ -78,7 +78,7 @@ async function importLegacyAuthToken(): Promise<boolean> {
 	await prisma.authToken.upsert({
 		where: { id: 'pronotool' },
 		create: { id: 'pronotool', authorization },
-		update: { authorization }
+		update: { authorization },
 	});
 
 	return true;
@@ -108,7 +108,7 @@ async function archiveLegacyPredictionLog(): Promise<void> {
 
 export async function importLegacyDataIfNeeded(): Promise<void> {
 	const existingMeta = await prisma.migrationMeta.findUnique({
-		where: { id: LEGACY_META_ID }
+		where: { id: LEGACY_META_ID },
 	});
 	if (existingMeta) {
 		return;
@@ -117,14 +117,14 @@ export async function importLegacyDataIfNeeded(): Promise<void> {
 	const predictionCount = await prisma.prediction.count();
 	if (predictionCount > 0) {
 		pinoLogger.warn(
-			'Legacy import: predictions already in database without migration meta; marking import complete'
+			'Legacy import: predictions already in database without migration meta; marking import complete',
 		);
 		await prisma.migrationMeta.create({
 			data: {
 				id: LEGACY_META_ID,
 				predictionsImported: predictionCount,
-				authImported: Boolean(await prisma.authToken.findUnique({ where: { id: 'pronotool' } }))
-			}
+				authImported: Boolean(await prisma.authToken.findUnique({ where: { id: 'pronotool' } })),
+			},
 		});
 		return;
 	}
@@ -151,10 +151,10 @@ export async function importLegacyDataIfNeeded(): Promise<void> {
 						searchAnalysis: '',
 						model: entry.model,
 						escalated: Boolean(entry.escalated),
-						submittedAt: new Date(entry.loggedAt)
-					}
-				})
-			)
+						submittedAt: new Date(entry.loggedAt),
+					},
+				}),
+			),
 		);
 		predictionsImported = entries.length;
 		await archiveLegacyPredictionLog();
@@ -166,12 +166,12 @@ export async function importLegacyDataIfNeeded(): Promise<void> {
 		data: {
 			id: LEGACY_META_ID,
 			predictionsImported,
-			authImported
-		}
+			authImported,
+		},
 	});
 
 	pinoLogger.info(
-		`Legacy import: ${predictionsImported} predictions imported${authImported ? ', auth token imported' : ''}`
+		`Legacy import: ${predictionsImported} predictions imported${authImported ? ', auth token imported' : ''}`,
 	);
 }
 
@@ -183,9 +183,9 @@ export async function runDatabaseMigrations(): Promise<void> {
 			cwd: process.cwd(),
 			env: {
 				...process.env,
-				DATABASE_URL: databaseUrl
+				DATABASE_URL: databaseUrl,
 			},
-			stdio: ['ignore', 'pipe', 'pipe']
+			stdio: ['ignore', 'pipe', 'pipe'],
 		});
 
 		let stderr = '';

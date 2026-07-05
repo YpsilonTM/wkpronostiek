@@ -1,7 +1,11 @@
+import { assertAdminAuthorized } from '$lib/server/admin-auth';
+import { runAuthRefresh } from '$lib/server/services/prediction-service';
 import type { RequestHandler } from './$types';
-import { runAuthRefresh } from '$lib/server/jobs';
 
-export const POST: RequestHandler = async () => {
+export const POST: RequestHandler = async ({ request }) => {
+	const denied = assertAdminAuthorized(request);
+	if (denied) return denied;
+
 	runAuthRefresh().catch(console.error);
 	return new Response('ok');
 };

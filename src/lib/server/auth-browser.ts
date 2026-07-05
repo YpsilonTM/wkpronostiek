@@ -1,10 +1,10 @@
-import { chromium, type BrowserContext, type Page } from 'playwright';
+import { type BrowserContext, chromium, type Page } from 'playwright';
 import type { Settings } from '$lib/types/settings';
 
 const CONSENT_SELECTORS = [
 	'button:has-text("Alles accepteren")',
 	'button:has-text("Alles weigeren")',
-	'button:has-text("Mijn instellingen beheren")'
+	'button:has-text("Mijn instellingen beheren")',
 ];
 
 const CONSENT_TEXTS = ['Alles accepteren', 'Alles weigeren', 'Accepteer', 'Akkoord'];
@@ -33,11 +33,11 @@ export async function captureAuthorizationWithPlaywright(settings: Settings): Pr
 
 	const browser = await chromium.launch({
 		headless: settings.headless,
-		slowMo: settings.slowMoMs
+		slowMo: settings.slowMoMs,
 	});
 	const context = await browser.newContext({
 		locale: 'nl-BE',
-		timezoneId: settings.timezone
+		timezoneId: settings.timezone,
 	});
 	const page = await context.newPage();
 
@@ -166,7 +166,11 @@ async function dismissConsent(page: Page): Promise<boolean> {
 	return false;
 }
 
-async function clickFirstVisible(page: Page, selector: string, fallbackText?: string): Promise<void> {
+async function clickFirstVisible(
+	page: Page,
+	selector: string,
+	fallbackText?: string,
+): Promise<void> {
 	const locator = page.locator(selector);
 	try {
 		await locator.first().waitFor({ state: 'visible', timeout: 10000 });

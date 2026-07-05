@@ -12,7 +12,7 @@ SvelteKit + TypeScript app die WK Pronostiek automatiseert: Sporza API, Gemini A
 
 ## Stack
 
-- **SvelteKit 2** + **Svelte 5** + **TypeScript**
+- **SvelteKit 2** + **Svelte 5** + **TypeScript** + **Tailwind CSS 4**
 - **Bun** runtime (`svelte-adapter-bun`)
 - **Prisma** + **SQLite** (`@prisma/adapter-libsql`) voor auth token en pronostiekgeschiedenis
 - **croner** voor geplande runs
@@ -40,6 +40,7 @@ Belangrijkste variabelen:
 - `DATA_DIR` — data map (default: project root lokaal; Docker: `/app/data`)
 - `DATABASE_URL` — optioneel; default `file:{DATA_DIR}/wkpronostiek.db` (lokaal: `./wkpronostiek.db`)
 - `PORT` — server poort (default: 3000)
+- `ADMIN_TOKEN` — optioneel; wanneer gezet vereisen `POST /api/run/*` een `X-Admin-Token` header (defense-in-depth)
 
 ## Gebruik
 
@@ -47,6 +48,14 @@ Development:
 
 ```bash
 bun run dev
+```
+
+Lint, typecheck en tests:
+
+```bash
+bun run lint
+bun run check
+bun run test
 ```
 
 Production build + start:
@@ -80,10 +89,14 @@ docker run -p 3000:3000 --env-file .env -v wkpronostiek-data:/app/data wkpronost
 De entrypoint (`scripts/docker-entrypoint.sh`) zorgt bij containerstart voor:
 
 1. `DATA_DIR=/app/data` en `DATABASE_URL=file:/app/data/wkpronostiek.db` (tenzij overschreven)
-2. `prisma migrate deploy` — schema op het gemounte volume
-3. App start — server `init` importeert daarna legacy JSONL/auth indien nodig
+2. App start — server `init` draait schema-migraties, legacy import en scheduler
 
 **Persistente data** zit op het volume (`/app/data`): `wkpronostiek.db`, eventueel legacy `.prediction_log.jsonl` vóór eerste import, en `.prediction_log.jsonl.bak` na import. Zonder `-v …:/app/data` gaat data verloren bij container verwijderen.
+
+### Deployment-aannames
+
+- **Single instance:** in-memory caches (wedstrijden, SSE-clients, auto-predict tracking) zijn per proces. Horizontaal schalen vereist gedeelde state (bijv. Redis) — niet ondersteund out of the box.
+- **Auth:** de app verwacht externe auth middleware vóór het dashboard. Optioneel `ADMIN_TOKEN` beschermt destructieve `/api/run/*` endpoints extra.
 
 ## Data opslag
 

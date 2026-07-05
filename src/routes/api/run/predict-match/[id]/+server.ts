@@ -1,31 +1,57 @@
 import { json } from '@sveltejs/kit';
-import type { RequestHandler } from './$types';
-import { runPredictSingle } from '$lib/server/jobs';
+import { assertAdminAuthorized } from '$lib/server/admin-auth';
+import { jsonError } from '$lib/server/api-response';
 import {
 	getUpcomingMatchesCache,
 	invalidateUpcomingMatchesCache,
-	isPredictionInFlight
+	isPredictionInFlight,
 } from '$lib/server/app-state';
+import { getSettings } from '$lib/server/config';
+import { attachCurrentPronos } from '$lib/server/match-enrichment';
+import { PronotoolApiClient } from '$lib/server/pronotool-api';
+import { runPredictSingle } from '$lib/server/services/prediction-service';
+import {
+	fetchUserPronosByMatchId,
+	findUpcomingMatchById,
+} from '$lib/server/services/pronotool-service';
+import type { MatchWithProno } from '$lib/types/match';
+import type { RequestHandler } from './$types';
 
-export const POST: RequestHandler = async ({ params }) => {
+async function resolveMatchForPrediction(matchId: number): Promise<MatchWithProno | null> {
+	const cache = getUpcomingMatchesCache();
+	const cached = cache?.find((m) => m.matchId === matchId);
+	if (cached) {
+		if (new Date(cached.startTime) <= new Date()) {
+			invalidateUpcomingMatchesCache();
+			return null;
+		}
+		return cached;
+	}
+
+	const settings = getSettings();
+	const rawMatch = await findUpcomingMatchById(matchId, settings);
+	if (!rawMatch) {
+		return null;
+	}
+
+	const api = new PronotoolApiClient(settings);
+	const userPronosByMatchId = await fetchUserPronosByMatchId(settings, api);
+	const [match] = attachCurrentPronos([rawMatch as MatchWithProno], userPronosByMatchId);
+	return match;
+}
+
+export const POST: RequestHandler = async ({ params, request }) => {
+	const denied = assertAdminAuthorized(request);
+	if (denied) return denied;
+
 	const matchId = Number(params.id);
 	if (Number.isNaN(matchId)) {
-		return json({ error: 'Ongeldige wedstrijd-id' }, { status: 400 });
+		return jsonError('Ongeldige wedstrijd-id', 400);
 	}
 
-	const cache = getUpcomingMatchesCache();
-	if (!cache) {
-		return json({ error: 'Wedstrijden nog niet geladen, ververs de pagina' }, { status: 409 });
-	}
-
-	const match = cache.find((m) => Number(m.matchId) === matchId);
+	const match = await resolveMatchForPrediction(matchId);
 	if (!match) {
-		return json({ error: 'Wedstrijd niet gevonden of niet meer aankomend' }, { status: 404 });
-	}
-
-	if (new Date(match.startTime) <= new Date()) {
-		invalidateUpcomingMatchesCache();
-		return json({ error: 'Wedstrijd is al begonnen' }, { status: 409 });
+		return jsonError('Wedstrijd niet gevonden of niet meer aankomend', 404);
 	}
 
 	if (isPredictionInFlight(matchId)) {

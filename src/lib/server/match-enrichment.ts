@@ -1,8 +1,8 @@
+import { AUTO_PREDICT_WINDOW_MS } from '$lib/constants';
 import type { Match, MatchWithProno } from '$lib/types/match';
 import { autoPredictedMatchIds } from './app-state';
-import { AUTO_PREDICT_WINDOW_MS } from './config';
 
-export function areTeamsConfirmed(match: Pick<Match, 'homeTeamId' | 'awayTeamId'>): boolean {
+function areTeamsConfirmed(match: Pick<Match, 'homeTeamId' | 'awayTeamId'>): boolean {
 	return (match.homeTeamId ?? 0) > 0 && (match.awayTeamId ?? 0) > 0;
 }
 
@@ -15,16 +15,21 @@ export function isKnockoutMatch(match: Pick<Match, 'phaseType' | 'phaseName'>): 
 	return /finale|achtste|1\/16|1\/8|kwart|half|semi|quarter|round of 16|knockout/.test(phase);
 }
 
+export function isWithinAutoPredictWindow(startTime: string, now = Date.now()): boolean {
+	const msUntil = new Date(startTime).getTime() - now;
+	return msUntil > 0 && msUntil <= AUTO_PREDICT_WINDOW_MS;
+}
+
 export function attachCurrentPronos(
-	matches: MatchWithProno[],
-	userPronosByMatchId: Map<number, { homeScore: number; awayScore: number }>
+	matches: Match[],
+	userPronosByMatchId: Map<number, { homeScore: number; awayScore: number }>,
 ): MatchWithProno[] {
 	return matches.map((match) => {
-		const current = userPronosByMatchId.get(Number(match.matchId));
+		const current = userPronosByMatchId.get(match.matchId);
 		return {
 			...match,
 			currentHomeScore: current ? current.homeScore : null,
-			currentAwayScore: current ? current.awayScore : null
+			currentAwayScore: current ? current.awayScore : null,
 		};
 	});
 }
@@ -35,9 +40,9 @@ export function enrichMatchForUi(match: MatchWithProno) {
 	const minutesUntilStart = Math.max(0, Math.floor(msUntil / 60_000));
 	const hasProno =
 		Number.isInteger(match.currentHomeScore) && Number.isInteger(match.currentAwayScore);
-	const autoPredictedInSession = autoPredictedMatchIds.has(Number(match.matchId));
+	const autoPredictedInSession = autoPredictedMatchIds.has(match.matchId);
 	const submitted = hasProno || autoPredictedInSession;
-	const inAutoWindow = msUntil > 0 && msUntil <= AUTO_PREDICT_WINDOW_MS;
+	const inAutoWindow = isWithinAutoPredictWindow(match.startTime);
 
 	return {
 		...match,
@@ -45,7 +50,7 @@ export function enrichMatchForUi(match: MatchWithProno) {
 		submitted,
 		autoPredictScheduled: inAutoWindow && !autoPredictedInSession,
 		autoPredictAt: new Date(startTime.getTime() - AUTO_PREDICT_WINDOW_MS).toISOString(),
-		teamsConfirmed: areTeamsConfirmed(match)
+		teamsConfirmed: areTeamsConfirmed(match),
 	};
 }
 

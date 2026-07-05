@@ -25,7 +25,6 @@ export function invalidateUpcomingMatchesCache(): void {
 }
 
 let _predictUpcomingRunning = false;
-let _activeJobs = 0;
 const _inFlightPredictions = new Set<number>();
 
 export function isPredictionInFlight(matchId: number): boolean {
@@ -46,12 +45,4 @@ export function getPredictUpcomingRunning(): boolean {
 
 export function setPredictUpcomingRunning(value: boolean): void {
 	_predictUpcomingRunning = value;
-}
-
-export function incrementActiveJobs(): void {
-	_activeJobs += 1;
-}
-
-export function decrementActiveJobs(): void {
-	_activeJobs -= 1;
 }

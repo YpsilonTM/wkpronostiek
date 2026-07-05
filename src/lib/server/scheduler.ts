@@ -1,6 +1,6 @@
 import { Cron } from 'croner';
 import { pinoLogger } from './logger';
-import { runPredictUpcoming } from './jobs';
+import { runPredictUpcoming } from './services/prediction-service';
 
 let started = false;
 
@@ -15,9 +15,7 @@ export function startScheduler(): void {
 		try {
 			await runPredictUpcoming();
 		} catch (err) {
-			pinoLogger.info(
-				`❌ Fout tijdens automatische run: ${err instanceof Error ? err.message : String(err)}`
-			);
+			pinoLogger.error({ err }, 'Fout tijdens automatische run');
 		}
 	});
 }

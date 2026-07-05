@@ -10,7 +10,5 @@ fi
 
 mkdir -p "$DATA_DIR"
 
-# Schema migrations (legacy JSONL/auth import runs in SvelteKit server init)
-bunx --bun prisma migrate deploy
-
+# Schema migrations run in SvelteKit server init (hooks.server.ts)
 exec bun ./build/index.js

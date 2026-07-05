@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { PrismaLibSql } from '@prisma/adapter-libsql';
 import { PrismaClient } from '../../generated/prisma/client';
 import { getDatabaseUrl } from './config';
@@ -9,7 +8,7 @@ const globalForPrisma = globalThis as unknown as {
 
 function createPrismaClient(): PrismaClient {
 	const adapter = new PrismaLibSql({
-		url: getDatabaseUrl()
+		url: getDatabaseUrl(),
 	});
 	return new PrismaClient({ adapter });
 }

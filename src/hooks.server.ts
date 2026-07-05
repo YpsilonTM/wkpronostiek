@@ -1,10 +1,10 @@
-import { building } from '$app/environment';
 import type { Handle, ServerInit } from '@sveltejs/kit';
+import { building } from '$app/environment';
 import { ensureDataDir } from '$lib/server/config';
+import { pinoLogger } from '$lib/server/logger';
 import { importLegacyDataIfNeeded, runDatabaseMigrations } from '$lib/server/migrate';
 import { startScheduler } from '$lib/server/scheduler';
-import { runPredictUpcoming } from '$lib/server/jobs';
-import { pinoLogger } from '$lib/server/logger';
+import { runPredictUpcoming } from '$lib/server/services/prediction-service';
 
 export const init: ServerInit = async () => {
 	if (building) return;
@@ -12,14 +12,20 @@ export const init: ServerInit = async () => {
 	await runDatabaseMigrations();
 	await importLegacyDataIfNeeded();
 	startScheduler();
+
+	if (!process.env.GEMINI_API_KEY?.trim()) {
+		pinoLogger.warn('GEMINI_API_KEY ontbreekt — voorspellingen zullen mislukken');
+	}
+
 	runPredictUpcoming().catch(console.error);
 	pinoLogger.info(`🚀 Server gestart op poort ${process.env.PORT || 3000}`);
 };
 
+/** Legacy URL rewrites for clients that omit the /api prefix. */
 const legacyRewrites: Record<string, string> = {
 	'/matches/upcoming': '/api/matches/upcoming',
 	'/stats/accuracy': '/api/stats/accuracy',
-	'/logs': '/api/logs'
+	'/logs': '/api/logs',
 };
 
 export const handle: Handle = async ({ event, resolve }) => {

@@ -1,6 +1,7 @@
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import dotenv from 'dotenv';
-import fs from 'node:fs/promises';
+import { resolveDatabaseUrl } from '$lib/database-url';
 import type { Settings } from '$lib/types/settings';
 
 dotenv.config();
@@ -12,11 +13,7 @@ export function getDataDir(): string {
 
 /** SQLite file URL; defaults to wkpronostiek.db inside getDataDir(). */
 export function getDatabaseUrl(): string {
-	const fromEnv = process.env.DATABASE_URL?.trim();
-	if (fromEnv) {
-		return fromEnv;
-	}
-	return `file:${path.join(getDataDir(), 'wkpronostiek.db')}`;
+	return resolveDatabaseUrl({ dataDir: process.env.DATA_DIR, cwd: process.cwd() });
 }
 
 export function getDataPath(filename: string): string {
@@ -42,10 +39,11 @@ export function getSettings(): Settings {
 		matchesApiUrl: 'https://api.sporza.be/spapp/1/matchdays/soccer/competition/8',
 		pronotoolAuthCacheFile: '.pronotool_auth.json',
 		slowMoMs: 0,
-		timezone: 'Europe/Brussels'
+		timezone: 'Europe/Brussels',
 	};
 }
 
+/** Legacy JSON auth file path — used only by one-time legacy import in migrate.ts. */
 export function getAuthCachePath(settings: Settings): string {
 	const file = settings.pronotoolAuthCacheFile || '.pronotool_auth.json';
 	if (path.isAbsolute(file)) {
@@ -54,4 +52,4 @@ export function getAuthCachePath(settings: Settings): string {
 	return getDataPath(path.basename(file));
 }
 
-export const AUTO_PREDICT_WINDOW_MS = 20 * 60 * 1000;
+export { AUTO_PREDICT_WINDOW_MS, MATCHES_CACHE_TTL_MS } from '$lib/constants';

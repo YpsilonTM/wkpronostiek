@@ -3,17 +3,11 @@
 	import StatsBar from '$lib/components/StatsBar.svelte';
 	import LogPanel from '$lib/components/LogPanel.svelte';
 	import MatchList from '$lib/components/MatchList.svelte';
+	import { MATCHES_CACHE_TTL_MS } from '$lib/constants';
 	import type { EnrichedMatch } from '$lib/types/match';
 	import type { AccuracyStats } from '$lib/types/prediction';
 	import type LogPanelComponent from '$lib/components/LogPanel.svelte';
 	import type { SseEvent } from '$lib/types/sse';
-
-	const AUTO_PREDICT_WINDOW_MS = 20 * 60 * 1000;
-
-	function isInAutoPredictWindow(startTime: string): boolean {
-		const msUntil = new Date(startTime).getTime() - Date.now();
-		return msUntil > 0 && msUntil <= AUTO_PREDICT_WINDOW_MS;
-	}
 
 	let connectionStatus = $state('Verbinden met log stream...');
 	let authBusy = $state(false);
@@ -22,13 +16,9 @@
 	let matchesError = $state('');
 	let accuracyStats = $state<AccuracyStats | null>(null);
 	let predictingIds = $state(new Set<number>());
-	let overlays = $state(
-		new Map<
-			number,
-			{ homeScore?: number; awayScore?: number; reasoning?: string; searchAnalysis?: string }
-		>()
-	);
 	let logPanel: LogPanelComponent | undefined = $state();
+
+	const isConnected = $derived(connectionStatus.includes('🟢'));
 
 	async function loadAccuracy() {
 		try {
@@ -56,23 +46,15 @@
 	}
 
 	function applyPrediction(data: Extract<SseEvent, { type: 'prediction' }>) {
-		const matchId = Number(data.matchId);
-		overlays = new Map(overlays).set(matchId, {
-			homeScore: data.homeScore,
-			awayScore: data.awayScore,
-			reasoning: data.reasoning || '',
-			searchAnalysis: data.searchAnalysis || ''
-		});
+		const matchId = data.matchId;
 		matches = matches.map((m) =>
-			Number(m.matchId) === matchId
+			m.matchId === matchId
 				? {
 						...m,
 						currentHomeScore: data.homeScore,
 						currentAwayScore: data.awayScore,
 						submitted: true,
-						autoPredictScheduled: data.autoPredicted
-							? false
-							: isInAutoPredictWindow(m.startTime),
+						autoPredictScheduled: false,
 						reasoning: data.reasoning || '',
 						searchAnalysis: data.searchAnalysis || ''
 					}
@@ -82,9 +64,9 @@
 	}
 
 	function handlePredictionFailed(data: Extract<SseEvent, { type: 'prediction-failed' }>) {
-		const matchId = Number(data.matchId);
+		const matchId = data.matchId;
 		predictingIds = new Set([...predictingIds].filter((id) => id !== matchId));
-		const match = matches.find((m) => Number(m.matchId) === matchId);
+		const match = matches.find((m) => m.matchId === matchId);
 		const label = match ? `${match.homeTeam} vs ${match.awayTeam}` : `wedstrijd ${matchId}`;
 		logPanel?.addLog(
 			`❌ Voorspelling mislukt voor ${label}${data.reason ? `: ${data.reason}` : ''}`,
@@ -113,7 +95,7 @@
 			const result = await res.json();
 			applyPrediction({
 				type: 'prediction',
-				matchId: Number(result.matchId),
+				matchId: result.matchId,
 				homeTeam: result.homeTeam,
 				awayTeam: result.awayTeam,
 				homeScore: result.homeScore,
@@ -155,8 +137,8 @@
 	onMount(() => {
 		loadMatches();
 		loadAccuracy();
-		const matchInterval = setInterval(loadMatches, 5 * 60 * 1000);
-		const accuracyInterval = setInterval(loadAccuracy, 5 * 60 * 1000);
+		const matchInterval = setInterval(loadMatches, MATCHES_CACHE_TTL_MS);
+		const accuracyInterval = setInterval(loadAccuracy, MATCHES_CACHE_TTL_MS);
 		return () => {
 			clearInterval(matchInterval);
 			clearInterval(accuracyInterval);
@@ -164,15 +146,38 @@
 	});
 </script>
 
-<h1>⚽ WK Pronostiek</h1>
-<p class="subtitle">Automatische run 20 min voor aanvang van elke wedstrijd</p>
+<header class="mb-8">
+	<div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+		<div>
+			<div class="mb-2 inline-flex items-center gap-2 rounded-full bg-emerald-950/60 px-3 py-1 text-xs font-medium text-emerald-300 ring-1 ring-emerald-800/50">
+				<span class="size-1.5 rounded-full bg-emerald-400"></span>
+				WK 2026 · Automatisering
+			</div>
+			<h1 class="text-3xl font-bold tracking-tight text-white sm:text-4xl">
+				⚽ WK Pronostiek
+			</h1>
+			<p class="mt-1.5 max-w-xl text-sm text-pitch-400 sm:text-base">
+				Automatische voorspelling 20 minuten voor aanvang · Gemini AI + Sporza
+			</p>
+		</div>
 
-<div class="top-controls">
-	<button class="btn-secondary" type="button" disabled={authBusy} onclick={triggerAuthRefresh}>
-		🔑 Auth vernieuwen
-	</button>
-	<p class="status">{connectionStatus}</p>
-</div>
+		<div class="flex flex-wrap items-center gap-3">
+			<span
+				class="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium ring-1 {isConnected
+					? 'bg-emerald-950/60 text-emerald-300 ring-emerald-800/50'
+					: 'bg-red-950/60 text-red-300 ring-red-800/50'}"
+			>
+				{connectionStatus}
+			</span>
+			<button class="btn-secondary" type="button" disabled={authBusy} onclick={triggerAuthRefresh}>
+				{#if authBusy}
+					<span class="spinner" aria-hidden="true"></span>
+				{/if}
+				🔑 Auth vernieuwen
+			</button>
+		</div>
+	</div>
+</header>
 
 <StatsBar stats={accuracyStats} />
 
@@ -180,17 +185,24 @@
 	bind:this={logPanel}
 	bind:connectionStatus
 	onAccuracy={handleAccuracy}
+	onAccuracyRefresh={loadAccuracy}
 	onPrediction={applyPrediction}
 	onPredictionFailed={handlePredictionFailed}
 	onMatchesRefresh={loadMatches}
 />
 
-<h2 class="section-title">Aankomende wedstrijden</h2>
-<MatchList
-	{matches}
-	loading={matchesLoading}
-	error={matchesError}
-	{predictingIds}
-	{overlays}
-	onpredict={predictMatch}
-/>
+<section class="mt-8">
+	<div class="mb-4 flex items-center justify-between gap-3">
+		<h2 class="text-lg font-semibold text-white">Aankomende wedstrijden</h2>
+		{#if !matchesLoading && matches.length > 0}
+			<span class="text-xs text-pitch-500">{matches.length} wedstrijd{matches.length === 1 ? '' : 'en'}</span>
+		{/if}
+	</div>
+	<MatchList
+		{matches}
+		loading={matchesLoading}
+		error={matchesError}
+		{predictingIds}
+		onpredict={predictMatch}
+	/>
+</section>

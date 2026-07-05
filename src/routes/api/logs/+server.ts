@@ -1,5 +1,5 @@
-import type { RequestHandler } from './$types';
 import { encoder, sseClients } from '$lib/server/logger';
+import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async () => {
 	let controller: ReadableStreamDefaultController<Uint8Array>;
@@ -28,14 +28,14 @@ export const GET: RequestHandler = async () => {
 		cancel() {
 			clearInterval(heartbeat);
 			sseClients.delete(controller);
-		}
+		},
 	});
 
 	return new Response(stream, {
 		headers: {
 			'Content-Type': 'text/event-stream',
 			'Cache-Control': 'no-cache',
-			Connection: 'keep-alive'
-		}
+			Connection: 'keep-alive',
+		},
 	});
 };
