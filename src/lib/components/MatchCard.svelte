@@ -63,6 +63,16 @@
 			{:else if match.submitted}
 				<span class="chip chip-success">Ingediend</span>
 			{/if}
+			{#if match.tacticLabel}
+				<span
+					class="chip {match.tactic === 'mirror'
+						? 'chip-auto'
+						: 'chip-success'}"
+					title="Actieve eindfase-tactiek"
+				>
+					{match.tacticLabel}
+				</span>
+			{/if}
 			{#if !predicting && match.autoPredictScheduled}
 				<span class="chip chip-auto">Auto gepland</span>
 			{/if}

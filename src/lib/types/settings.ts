@@ -12,6 +12,7 @@ export interface Settings {
 	pronotoolAuthCacheFile: string;
 	slowMoMs: number;
 	timezone: string;
+	tactic: import('./tactic').TacticConfig;
 }
 
 export interface AuthCachePayload {

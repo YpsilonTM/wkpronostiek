@@ -26,10 +26,14 @@ export interface EnrichedMatch extends MatchWithProno {
 	teamsConfirmed: boolean;
 	reasoning?: string;
 	searchAnalysis?: string;
+	tactic?: 'ai' | 'ai_tactic' | 'mirror' | null;
+	tacticLabel?: string | null;
 }
 
 export interface UserOverview {
+	userId?: string | null;
 	pronos: UserProno[];
+	groups?: import('./standings').GroupSummary[];
 }
 
 export interface UserProno {

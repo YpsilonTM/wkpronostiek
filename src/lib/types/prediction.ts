@@ -1,3 +1,5 @@
+import type { TacticContext } from './tactic';
+
 export interface Prediction {
 	matchId: number;
 	homeTeam: string;
@@ -9,6 +11,8 @@ export interface Prediction {
 	searchAnalysis: string;
 	model?: string;
 	escalated?: boolean;
+	tactic?: 'ai' | 'ai_tactic' | 'mirror';
+	tacticLabel?: string | null;
 }
 
 export interface PronoSubmission {
@@ -43,4 +47,6 @@ export interface AccuracyStats {
 
 export interface PredictMatchesOptions {
 	onDebug?: (message: string) => void;
+	tacticContext?: TacticContext;
+	injectGeminiContext?: boolean;
 }

@@ -1,6 +1,8 @@
 import type { Match, UserOverview, UserProno } from '$lib/types/match';
 import type { PronoSubmission } from '$lib/types/prediction';
 import type { Settings } from '$lib/types/settings';
+import type { GroupMember, GroupStandings, GroupSummary } from '$lib/types/standings';
+import type { RivalProno } from '$lib/types/tactic';
 
 class HttpStatusError extends Error {
 	status: number;
@@ -26,10 +28,59 @@ export class PronotoolApiClient {
 		const pronosRaw = Array.isArray(payload?.pronos) ? payload.pronos : [];
 
 		return {
+			userId: this.#parseOptionalString(payload?.userId ?? payload?.user?.id),
+			groups: this.#parseGroups(payload),
 			pronos: pronosRaw
 				.map((item: unknown) => this.#parseProno(item))
 				.filter(Boolean) as UserProno[],
 		};
+	}
+
+	async fetchGroupStandings(authorization: string, groupId: string): Promise<GroupStandings> {
+		const url = this.#expandUrl(this.settings.tactic.standingsApiUrl, { groupId });
+		const response = await this.#fetchWithTimeout(url, {
+			method: 'GET',
+			headers: this.#authHeaders(authorization),
+		});
+		await this.#raiseForStatus(response);
+
+		const payload = await response.json();
+		const groupName =
+			this.#parseOptionalString(payload?.name ?? payload?.groupName) ||
+			this.settings.tactic.groupName ||
+			groupId;
+		const members = this.#parseStandingsMembers(payload);
+
+		return { groupId, groupName, members };
+	}
+
+	async fetchRivalPronos(
+		authorization: string,
+		userId: string,
+		groupId: string,
+	): Promise<RivalProno[]> {
+		const url = this.#expandUrl(this.settings.tactic.rivalPronosApiUrl, { userId, groupId });
+		const response = await this.#fetchWithTimeout(url, {
+			method: 'GET',
+			headers: this.#authHeaders(authorization),
+		});
+		await this.#raiseForStatus(response);
+
+		const payload = await response.json();
+		const pronosRaw = Array.isArray(payload?.pronos)
+			? payload.pronos
+			: Array.isArray(payload)
+				? payload
+				: [];
+
+		const results: RivalProno[] = [];
+		for (const item of pronosRaw) {
+			const parsed = this.#parseRivalProno(item);
+			if (parsed) {
+				results.push(parsed);
+			}
+		}
+		return results;
 	}
 
 	async fetchMatches(): Promise<Match[]> {
@@ -130,6 +181,14 @@ export class PronotoolApiClient {
 		};
 	}
 
+	#expandUrl(template: string, params: Record<string, string>): string {
+		let url = template;
+		for (const [key, value] of Object.entries(params)) {
+			url = url.replaceAll(`{${key}}`, encodeURIComponent(value));
+		}
+		return url;
+	}
+
 	async #raiseForStatus(response: Response): Promise<void> {
 		if (response.ok) {
 			return;
@@ -158,6 +217,75 @@ export class PronotoolApiClient {
 		}
 	}
 
+	#parseOptionalString(value: unknown): string | null {
+		if (value === null || value === undefined) return null;
+		const text = String(value).trim();
+		return text || null;
+	}
+
+	#parseGroups(payload: Record<string, unknown>): GroupSummary[] {
+		const rawGroups = payload.groups ?? payload.competitions ?? payload.minicompetitions;
+		if (!Array.isArray(rawGroups)) {
+			return [];
+		}
+
+		const groups: GroupSummary[] = [];
+		for (const item of rawGroups) {
+			if (!item || typeof item !== 'object') continue;
+			const record = item as Record<string, unknown>;
+			const id = this.#parseOptionalString(record.id ?? record.groupId);
+			const name = this.#parseOptionalString(record.name ?? record.groupName);
+			if (!id || !name) continue;
+
+			groups.push({
+				id,
+				name,
+				rank: Number.isInteger(record.rank) ? (record.rank as number) : null,
+				points: Number.isInteger(record.points) ? (record.points as number) : null,
+			});
+		}
+		return groups;
+	}
+
+	#parseStandingsMembers(payload: unknown): GroupMember[] {
+		const record =
+			payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+		const raw =
+			record.members ??
+			record.standings ??
+			record.ranking ??
+			record.participants ??
+			(Array.isArray(payload) ? payload : []);
+
+		if (!Array.isArray(raw)) {
+			return [];
+		}
+
+		const members: GroupMember[] = [];
+		for (let index = 0; index < raw.length; index += 1) {
+			const item = raw[index];
+			if (!item || typeof item !== 'object') continue;
+			const row = item as Record<string, unknown>;
+			const userId = this.#parseOptionalString(
+				row.userId ?? row.id ?? (row.user as { id?: string } | undefined)?.id,
+			);
+			const name = this.#parseOptionalString(
+				row.name ?? row.displayName ?? (row.user as { name?: string } | undefined)?.name,
+			);
+			const points = Number(row.points ?? row.score ?? row.totalPoints ?? 0);
+			const rank = Number.isInteger(row.rank)
+				? (row.rank as number)
+				: Number.isInteger(row.position)
+					? (row.position as number)
+					: index + 1;
+
+			if (!userId || !name) continue;
+			members.push({ userId, name, rank, points: Number.isFinite(points) ? points : 0 });
+		}
+
+		return members.sort((a, b) => a.rank - b.rank);
+	}
+
 	#parseProno(item: unknown): UserProno | null {
 		if (!item || typeof item !== 'object') {
 			return null;
@@ -178,6 +306,37 @@ export class PronotoolApiClient {
 			awayScore: awayScore === null ? null : Number(awayScore),
 			modifiedTime: typeof record.modifiedTime === 'string' ? record.modifiedTime : null,
 			points: Number.isInteger(record.points) ? (record.points as number) : null,
+		};
+	}
+
+	#parseRivalProno(item: unknown): RivalProno | null {
+		if (!item || typeof item !== 'object') {
+			return null;
+		}
+
+		const record = item as Record<string, unknown>;
+		const matchId = Number(record.matchId);
+		const homeScore = record.homeScore;
+		const awayScore = record.awayScore;
+
+		if (
+			!Number.isInteger(matchId) ||
+			homeScore === null ||
+			homeScore === undefined ||
+			awayScore === null ||
+			awayScore === undefined
+		) {
+			return null;
+		}
+
+		const shootoutRaw = record.shootoutWinner;
+		const shootoutWinner = shootoutRaw === 0 || shootoutRaw === 1 ? (shootoutRaw as 0 | 1) : null;
+
+		return {
+			matchId,
+			homeScore: Number(homeScore),
+			awayScore: Number(awayScore),
+			shootoutWinner,
 		};
 	}
 }

@@ -1,13 +1,15 @@
 import type { Match, MatchWithProno } from '$lib/types/match';
-import type { Prediction } from '$lib/types/prediction';
+import type { Prediction, PredictMatchesOptions } from '$lib/types/prediction';
 import type { Settings } from '$lib/types/settings';
+import type { TacticContext, TacticSnapshot } from '$lib/types/tactic';
 import {
-	autoPredictedMatchIds,
 	clearPredictionInFlight,
 	getPredictUpcomingRunning,
 	invalidateUpcomingMatchesCache,
+	markAutoPredicted,
 	markPredictionInFlight,
 	setPredictUpcomingRunning,
+	shouldSkipAutoPredict,
 } from '../app-state';
 import { resolveApiAuthorization } from '../auth';
 import { getSettings } from '../config';
@@ -20,6 +22,14 @@ import {
 import { logPrediction, reportPredictionAccuracy } from '../prediction-log';
 import { predictMatches } from '../predictor';
 import { PronotoolApiClient } from '../pronotool-api';
+import { rivalPronosFingerprint } from '../rival-pronos';
+import {
+	buildMirrorPredictions,
+	buildTacticContext,
+	formatTacticLabel,
+	shouldInjectGeminiContext,
+} from '../tactic';
+import { getRivalFromSnapshot, loadTacticSnapshot } from '../tactic-service';
 import {
 	fetchMatchesCached,
 	fetchUserPronosByMatchId,
@@ -88,6 +98,8 @@ function broadcastPredictionResult(
 		model: prediction.model || null,
 		escalated: Boolean(prediction.escalated),
 		autoPredicted,
+		tactic: prediction.tactic ?? null,
+		tacticLabel: prediction.tacticLabel ?? null,
 	});
 }
 
@@ -96,6 +108,11 @@ function broadcastPredictionFailed(matchId: number, reason?: string): void {
 }
 
 function logPredictionDetails(prediction: Prediction, matchLabel?: string): void {
+	if (prediction.tactic === 'mirror') {
+		pinoLogger.info(`🪞 Tactiek${matchLabel ? ` (${matchLabel})` : ''}: ${prediction.reasoning}`);
+		return;
+	}
+
 	pinoLogger.info(`🧠 Reden${matchLabel ? ` voor ${matchLabel}` : ''}: ${prediction.reasoning}`);
 	if (prediction.searchAnalysis) {
 		pinoLogger.info(
@@ -107,18 +124,128 @@ function logPredictionDetails(prediction: Prediction, matchLabel?: string): void
 	}
 }
 
+async function resolvePredictionsForMatches(
+	settings: Settings,
+	api: PronotoolApiClient,
+	matches: MatchWithProno[],
+	allMatches: Match[],
+	snapshot?: TacticSnapshot,
+): Promise<Prediction[]> {
+	const loadedSnapshot = snapshot ?? (await loadTacticSnapshot(settings, api, allMatches, matches));
+
+	const { decision } = loadedSnapshot;
+	const rival = getRivalFromSnapshot(loadedSnapshot);
+	const rivalName = rival?.name ?? decision.rivalName ?? `#${settings.tactic.mirrorRank}`;
+
+	pinoLogger.info(
+		{
+			tactic: decision.mode,
+			reason: decision.reason,
+			rival: rivalName,
+			lead: decision.leadPoints,
+		},
+		'Tactic beslissing',
+	);
+
+	if (decision.mode === 'mirror') {
+		const mirrorPredictions = buildMirrorPredictions(
+			matches,
+			loadedSnapshot.rivalPronosByMatchId,
+			rivalName,
+		);
+
+		if (mirrorPredictions.length === 0) {
+			pinoLogger.warn(
+				'Mirror modus: geen rival-pronos beschikbaar; wedstrijden overgeslagen tot volgende cron.',
+			);
+			return [];
+		}
+
+		if (mirrorPredictions.length < matches.length) {
+			pinoLogger.warn(
+				`Mirror modus: ${mirrorPredictions.length}/${matches.length} wedstrijden hebben rival-prono; rest wordt overgeslagen.`,
+			);
+		}
+
+		return mirrorPredictions;
+	}
+
+	const apiKey = process.env.GEMINI_API_KEY || '';
+	const injectContext = shouldInjectGeminiContext(decision, settings.tactic);
+	const rivalForContext = getRivalFromSnapshot(loadedSnapshot);
+	const tacticLabel = formatTacticLabel(injectContext ? 'ai_tactic' : 'ai', rivalForContext?.name);
+
+	const predictions: Prediction[] = [];
+
+	for (const match of matches) {
+		let tacticContext: TacticContext | undefined;
+
+		if (injectContext && loadedSnapshot.standings && rivalForContext) {
+			tacticContext = buildTacticContext(
+				loadedSnapshot.standings,
+				loadedSnapshot.myUserId,
+				{
+					userId: rivalForContext.userId,
+					name: rivalForContext.name,
+					rank: rivalForContext.rank,
+					points:
+						loadedSnapshot.standings.members.find((m) => m.userId === rivalForContext.userId)
+							?.points ?? 0,
+				},
+				match,
+				loadedSnapshot.rivalPronosByMatchId.get(match.matchId) ?? null,
+				allMatches,
+			);
+		} else if (injectContext) {
+			pinoLogger.warn('ai_tactic zonder standings/rival; plain AI voor deze wedstrijd.');
+		}
+
+		const options: PredictMatchesOptions = {
+			injectGeminiContext: injectContext && Boolean(tacticContext),
+			tacticContext,
+		};
+
+		const batch = await predictMatches(apiKey, [match], options);
+		for (const prediction of batch) {
+			predictions.push({
+				...prediction,
+				tactic: injectContext && tacticContext ? 'ai_tactic' : 'ai',
+				tacticLabel: injectContext && tacticContext ? tacticLabel : null,
+			});
+		}
+	}
+
+	return predictions;
+}
+
 export async function runPredictSingle(match: MatchWithProno): Promise<Prediction | null> {
 	const matchId = match.matchId;
 	markPredictionInFlight(matchId);
 	const settings = getSettings();
 	const api = new PronotoolApiClient(settings);
-	const apiKey = process.env.GEMINI_API_KEY || '';
 
 	try {
-		pinoLogger.info(`🤖 Gemini voorspelt ${match.homeTeam} vs ${match.awayTeam}...`);
-		const predictions = await predictMatches(apiKey, [match], {
-			onDebug: (message) => pinoLogger.debug(message),
-		});
+		const allMatches = await fetchMatchesCached(settings);
+		const snapshot = await loadTacticSnapshot(settings, api, allMatches, [match]);
+
+		if (snapshot.decision.mode === 'mirror') {
+			pinoLogger.info(`🪞 Mirror tactiek voor ${match.homeTeam} vs ${match.awayTeam}...`);
+		} else if (shouldInjectGeminiContext(snapshot.decision, settings.tactic)) {
+			pinoLogger.info(
+				`🤖 Gemini (klassement-context) voorspelt ${match.homeTeam} vs ${match.awayTeam}...`,
+			);
+		} else {
+			pinoLogger.info(`🤖 Gemini voorspelt ${match.homeTeam} vs ${match.awayTeam}...`);
+		}
+
+		const predictions = await resolvePredictionsForMatches(
+			settings,
+			api,
+			[match],
+			allMatches,
+			snapshot,
+		);
+
 		if (predictions.length === 0) {
 			pinoLogger.error({ matchId }, 'No prediction received, try again.');
 			broadcastPredictionFailed(matchId, 'Geen voorspelling ontvangen');
@@ -154,7 +281,6 @@ export async function runPredictUpcoming(): Promise<void> {
 	setPredictUpcomingRunning(true);
 	const settings = getSettings();
 	const api = new PronotoolApiClient(settings);
-	const apiKey = process.env.GEMINI_API_KEY || '';
 
 	try {
 		pinoLogger.debug('🤖 Automatische voorspelling gestart voor aankomende wedstrijden...');
@@ -168,30 +294,42 @@ export async function runPredictUpcoming(): Promise<void> {
 		const userPronosByMatchId = await fetchUserPronosByMatchId(settings, api);
 		const now = Date.now();
 
-		const matchesToPredict = attachCurrentPronos(
-			allMatches.filter((match) => {
-				if (!isWithinAutoPredictWindow(match.startTime, now)) return false;
-
-				if (autoPredictedMatchIds.has(match.matchId)) {
-					pinoLogger.debug(
-						`Skipping ${match.homeTeam} vs ${match.awayTeam}: already auto-predicted in this session.`,
-					);
-					return false;
-				}
-
-				return true;
-			}),
+		const candidateMatches = attachCurrentPronos(
+			allMatches.filter((match) => isWithinAutoPredictWindow(match.startTime, now)),
 			userPronosByMatchId,
 		);
+
+		const snapshot = await loadTacticSnapshot(settings, api, allMatches, candidateMatches);
+		const rivalFingerprint = rivalPronosFingerprint(snapshot.rivalPronosByMatchId);
+
+		const matchesToPredict = candidateMatches.filter((match) => {
+			if (
+				shouldSkipAutoPredict(
+					match.matchId,
+					settings.tactic.overwrite,
+					snapshot.decision.mode === 'mirror' ? rivalFingerprint : undefined,
+				)
+			) {
+				pinoLogger.debug(
+					`Skipping ${match.homeTeam} vs ${match.awayTeam}: already auto-predicted in this session.`,
+				);
+				return false;
+			}
+			return true;
+		});
 
 		if (matchesToPredict.length === 0) {
 			pinoLogger.debug('🤷 Geen aankomende wedstrijden gevonden binnen 20 min om te voorspellen.');
 			return;
 		}
 
-		const predictions = await predictMatches(apiKey, matchesToPredict, {
-			onDebug: (message) => pinoLogger.debug(message),
-		});
+		const predictions = await resolvePredictionsForMatches(
+			settings,
+			api,
+			matchesToPredict,
+			allMatches,
+			snapshot,
+		);
 
 		if (predictions.length === 0) {
 			pinoLogger.error('No prediction received, try again.');
@@ -208,7 +346,11 @@ export async function runPredictUpcoming(): Promise<void> {
 		}
 		await submitPredictions(api, settings, predictions, matchesById);
 		for (const prediction of predictions) {
-			autoPredictedMatchIds.add(prediction.matchId);
+			markAutoPredicted(
+				prediction.matchId,
+				prediction.tactic ?? 'ai',
+				snapshot.decision.mode === 'mirror' ? rivalFingerprint : undefined,
+			);
 			const match = matchesById.get(prediction.matchId);
 			if (match) {
 				broadcastPredictionResult(prediction, match, true);

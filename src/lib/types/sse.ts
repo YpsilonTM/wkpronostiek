@@ -18,6 +18,8 @@ export interface SsePredictionEvent {
 	model: string | null;
 	escalated: boolean;
 	autoPredicted: boolean;
+	tactic?: 'ai' | 'ai_tactic' | 'mirror' | null;
+	tacticLabel?: string | null;
 }
 
 export interface SseAccuracyEvent extends AccuracyStats {

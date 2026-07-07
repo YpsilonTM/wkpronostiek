@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Settings } from '$lib/types/settings';
 import { captureAuthorizationWithPlaywright, normalizeAuthorization } from './auth-browser';
@@ -62,6 +63,14 @@ async function resolveValidAuthorization(
 
 async function loginViaNodeHelper(settings: Settings): Promise<string> {
 	const helperPath = path.resolve('scripts/node-auth-login.mjs');
+
+	try {
+		await fs.access(helperPath);
+	} catch {
+		throw new Error(
+			'Auth helper ontbreekt. Run: bun run build:auth-helper (of bun run dev opnieuw na predev).',
+		);
+	}
 
 	return await new Promise((resolve, reject) => {
 		const child = spawn('node', [helperPath], {

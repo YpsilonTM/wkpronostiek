@@ -3,6 +3,47 @@ import type { MatchWithProno } from '$lib/types/match';
 /** Match IDs auto-predicted this session; manual predictions are not tracked here. */
 export const autoPredictedMatchIds = new Set<number>();
 
+/** Last submitted tactic per match (for overwrite detection). */
+export const autoPredictedTactics = new Map<
+	number,
+	{ mode: 'ai' | 'ai_tactic' | 'mirror'; rivalFingerprint?: string }
+>();
+
+export function clearAutoPredictionTracking(matchId: number): void {
+	autoPredictedMatchIds.delete(matchId);
+	autoPredictedTactics.delete(matchId);
+}
+
+export function shouldSkipAutoPredict(
+	matchId: number,
+	overwrite: boolean,
+	rivalFingerprint?: string,
+): boolean {
+	if (!autoPredictedMatchIds.has(matchId)) {
+		return false;
+	}
+	if (!overwrite) {
+		return true;
+	}
+	const prev = autoPredictedTactics.get(matchId);
+	if (!prev) {
+		return false;
+	}
+	if (rivalFingerprint && prev.rivalFingerprint !== rivalFingerprint) {
+		return false;
+	}
+	return true;
+}
+
+export function markAutoPredicted(
+	matchId: number,
+	mode: 'ai' | 'ai_tactic' | 'mirror',
+	rivalFingerprint?: string,
+): void {
+	autoPredictedMatchIds.add(matchId);
+	autoPredictedTactics.set(matchId, { mode, rivalFingerprint });
+}
+
 let _upcomingMatchesCache: MatchWithProno[] | null = null;
 let _cacheTime = 0;
 

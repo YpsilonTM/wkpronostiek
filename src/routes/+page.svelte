@@ -56,7 +56,9 @@
 						submitted: true,
 						autoPredictScheduled: false,
 						reasoning: data.reasoning || '',
-						searchAnalysis: data.searchAnalysis || ''
+						searchAnalysis: data.searchAnalysis || '',
+						tactic: data.tactic ?? null,
+						tacticLabel: data.tacticLabel ?? null
 					}
 				: m
 		);

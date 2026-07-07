@@ -48,8 +48,26 @@ Resultaat: +5 voorsprong blijft, titel veiliggesteld
 | Modus | Gedrag |
 |-------|--------|
 | `ai` | Altijd Gemini (huidig gedrag) |
+| `ai_tactic` | Gemini met klassement, rival-pronos en puntentelling in prompt |
 | `mirror` | Altijd pronos van gekozen tegenstander kopiëren |
 | `auto` | Gemini tot eindfase-criteria voldaan, daarna spiegelen |
+
+## Puntentelling (Sporza)
+
+Per wedstrijd geldt **één** tier (hoogste passende, niet cumulatief):
+
+| Resultaat | Punten |
+|-----------|--------|
+| Exacte score (na 90 min) | 20 |
+| Juist doelpuntenverschil | 14 |
+| Juiste winnende ploeg | 10 |
+| Anders | 0 |
+
+**Knock-out:** bij gelijke stand na 90 min telt de gekozen strafschoppenwinnaar mee voor "juiste winnende ploeg" — er is geen gelijkspel als eindresultaat.
+
+**Groepsfase:** gelijkspel na 90 min is een geldige uitslag; 10 punten = juiste uitkomst (thuiswinst / uitwinst / gelijk).
+
+Implementatie: [`src/lib/scoring.ts`](src/lib/scoring.ts).
 
 ### Auto-modus criteria (voorstel)
 
@@ -60,21 +78,28 @@ Activeer spiegel-tactiek wanneer **alle** voorwaarden waar zijn:
 - Resterende speelbare wedstrijden ≤ `TACTIC_REMAINING_MATCHES` (bv. 8)
 - Optioneel: alleen in knock-outfase (`phaseName` bevat “achtste”, “kwart”, etc.)
 
-## Technische hiaten (huidige codebase)
+## Technische status
 
-De app gebruikt vandaag:
+Geïmplementeerd:
 
-- `GET …/user-overview/overview` — eigen pronos en groepsnamen
+- `src/lib/scoring.ts` — puntentelling 20/14/10
+- `src/lib/server/tactic.ts` — beslissingslogica (`ai`, `ai_tactic`, `mirror`, `auto`)
+- `src/lib/server/tactic-service.ts` — laden standings + rival-pronos
+- Integratie in `prediction-service.ts` en Gemini prompt
+- Config via `TACTIC_*` env vars (zie `.env.example`)
+- API docs: [`docs/sporza-api.md`](docs/sporza-api.md)
+
+**API-endpoints** voor klassement en rival-pronos zijn configureerbaar via env. Standaard-URLs moeten gevalideerd worden via network tab op wkpronostiek.sporza.be.
+
+De app gebruikt:
+
+- `GET …/user-overview/overview` — eigen pronos, groups, userId
 - `POST …/prono` — eigen pronos indienen
 - `GET …/matchdays/…` — wedstrijden en uitslagen
+- `GET …/groups/{groupId}/standings` — klassement (URL configureerbaar)
+- `GET …/users/{userId}/pronos?groupId=…` — rival-pronos (URL configureerbaar)
 
-**Nog niet geïmplementeerd** (API-endpoints moeten worden ontdekt via network tab op wkpronostiek.sporza.be):
-
-- Klassement per groep (rank, userId, punten, naam)
-- Pronos van een andere speler per wedstrijd of als lijst
-- Eventueel userId koppeling binnen een groep
-
-## Voorgestelde architectuur
+## Voorgestelde architectuur (referentie)
 
 ```
 hooks.server.ts / cron (1u voor match)
@@ -154,4 +179,4 @@ Toekomstig pad met endgame:
 
 ---
 
-*Status: plan — nog niet geïmplementeerd. Laatste update: juni 2026.*
+*Status: geïmplementeerd (juli 2026). Valideer Sporza API URLs via DevTools indien klassement niet laadt.*

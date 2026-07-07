@@ -1,6 +1,8 @@
 import { GoogleGenAI } from '@google/genai';
+import { describeScoringRules } from '$lib/scoring';
 import type { MatchWithProno } from '$lib/types/match';
 import type { Prediction, PredictMatchesOptions } from '$lib/types/prediction';
+import type { TacticContext } from '$lib/types/tactic';
 import { isKnockoutMatch } from '../match-enrichment';
 import {
 	compactText,
@@ -50,7 +52,44 @@ KNOCK-OUT REGEL (VERPLICHT):
 `;
 }
 
-function buildPrompt(match: MatchWithProno, todayStr: string): string {
+function buildTacticContextSection(match: MatchWithProno, context: TacticContext): string {
+	const isKnockout = isKnockoutMatch(match);
+	const rivalLine = context.rivalPronoForMatch
+		? `#${context.rivalRank} ${context.rivalName} voorspelt voor deze wedstrijd: ${context.rivalPronoForMatch.homeScore}-${context.rivalPronoForMatch.awayScore}${
+				context.rivalPronoForMatch.shootoutWinner === 0
+					? ' (thuis wint na strafschoppen)'
+					: context.rivalPronoForMatch.shootoutWinner === 1
+						? ' (uit wint na strafschoppen)'
+						: ''
+			}.`
+		: `#${context.rivalRank} ${context.rivalName} heeft nog geen zichtbare prono voor deze wedstrijd.`;
+
+	const leadLine =
+		context.leadOverRival !== null
+			? `Jij staat #${context.myRank} met ${context.myPoints} pt; voorsprong op #${context.rivalRank}: +${context.leadOverRival} pt.`
+			: `Jij staat #${context.myRank} met ${context.myPoints} pt in minicompetitie "${context.groupName}".`;
+
+	const thirdLine =
+		context.leadOverThird !== null ? `Voorsprong op #3: +${context.leadOverThird} pt.` : '';
+
+	return `
+COMPETITIE-CONTEXT (eindfase-tactiek):
+- ${leadLine}
+- ${thirdLine}
+- Nog ${context.remainingMatches} speelbare wedstrijd(en) in het tornooi.
+- ${rivalLine}
+${describeScoringRules(isKnockout)}
+- Als je exact dezelfde score kiest als je rival, scoren jullie op die wedstrijd evenveel punten → je voorsprong blijft constant op resterende wedstrijden.
+- Prioriteit: optimaliseer het KLASSEMENT in "${context.groupName}", niet per se de "beste voetbalvoorspelling",
+  tenzij je achterloopt of meerdere spelers nog kunnen winnen.
+`.trim();
+}
+
+function buildPrompt(
+	match: MatchWithProno,
+	todayStr: string,
+	options: PredictMatchesOptions = {},
+): string {
 	const currentPronoSection = hasCurrentProno(match)
 		? `
 HUIDIGE PRONOSTIEK OP SPORZA: ${match.currentHomeScore}-${match.currentAwayScore}
@@ -69,7 +108,11 @@ Werk uiterst systematisch en stap-voor-stap. Gebruik Google Search actief om de 
 
 FASE-CONTEXT (${match.phaseName || 'onbekend'}):
 ${describePhaseContext(match.phaseName)}
-${buildKnockoutShootoutSection(match)}${currentPronoSection}
+${buildKnockoutShootoutSection(match)}${currentPronoSection}${
+	options.tacticContext && options.injectGeminiContext
+		? `\n\n${buildTacticContextSection(match, options.tacticContext)}\n`
+		: ''
+}
 Voor deze match moet je een grondige analyse doen op basis van deze 5 pijlers:
 1) Lopende WK 2026 prestaties: Hoe hebben beide teams gepresteerd in hun voorgaande poule- of knock-outmatchen op DIT WK 2026 (punten, doelpunten, vertoond spel, tactiek)?
 2) Teamnieuws & Selectie: Blessures, schorsingen, fysieke paraatheid of mogelijke rotatie in de laatste 14 dagen voorafgaand aan ${todayStr}. Denk aan sleutelspelers die ontbreken.
@@ -194,7 +237,7 @@ async function predictOneMatch(
 		timeZone: 'Europe/Brussels',
 	});
 
-	const prompt = buildPrompt(match, todayStr);
+	const prompt = buildPrompt(match, todayStr, options);
 	let model = DEFAULT_MODEL;
 
 	try {
@@ -213,10 +256,15 @@ Extra instructie: je vorige analyse was te onzeker of te extreem. Wees grondiger
 			}`.trim();
 			rawText = await generatePrediction(ai, model, escalationPrompt, debug);
 			prediction = await parseAndValidatePrediction(ai, rawText, matchId, match, debug);
-			return { ...prediction, escalated: true, model };
+			return {
+				...prediction,
+				escalated: true,
+				model,
+				tactic: options.tacticContext ? 'ai_tactic' : 'ai',
+			};
 		}
 
-		return { ...prediction, model };
+		return { ...prediction, model, tactic: options.tacticContext ? 'ai_tactic' : 'ai' };
 	} catch (err) {
 		debug(
 			`Prediction failed for match ${matchId}: ${err instanceof Error ? err.message : String(err)}`,
