@@ -35,9 +35,9 @@ async function readLegacyPredictionLogLines(): Promise<PredictionLogEntry[]> {
 	const entries: PredictionLogEntry[] = [];
 	const lines = raw.trim().split('\n').filter(Boolean);
 
-	for (let index = 0; index < lines.length; index += 1) {
+	for (const [index, line] of lines.entries()) {
 		try {
-			entries.push(JSON.parse(lines[index]!) as PredictionLogEntry);
+			entries.push(JSON.parse(line) as PredictionLogEntry);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			pinoLogger.warn(`Legacy import: skip invalid JSONL line ${index + 1}: ${message}`);

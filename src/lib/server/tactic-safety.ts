@@ -1,6 +1,11 @@
 import { SPORZA_MATCH_POINTS } from '$lib/scoring';
 import type { GroupMember, GroupStandings } from '$lib/types/standings';
-import type { ChaserThreat, MirrorSafetyAnalysis, TacticConfig, TacticDangerLevel } from '$lib/types/tactic';
+import type {
+	ChaserThreat,
+	MirrorSafetyAnalysis,
+	TacticConfig,
+	TacticDangerLevel,
+} from '$lib/types/tactic';
 
 export function maxCatchUpPoints(remainingMatches: number): number {
 	return Math.max(0, remainingMatches) * SPORZA_MATCH_POINTS.exactScore;

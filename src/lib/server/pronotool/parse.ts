@@ -156,16 +156,12 @@ export function parseGroups(payload: unknown, myUserId: string | null = null): G
 		const code = parseOptionalString(
 			groupRecord?.code ?? groupRecord?.groupCode ?? record.code ?? record.groupCode,
 		);
-		const id = parseIdString(
-			groupRecord?.id ?? record.id ?? record.groupId ?? code ?? name,
-		);
+		const id = parseIdString(groupRecord?.id ?? record.id ?? record.groupId ?? code ?? name);
 
 		if (!id || !name) continue;
 
 		const usersRaw = record.users ?? record.members ?? record.rankings ?? record.standings;
-		const members = Array.isArray(usersRaw)
-			? parseStandingsMembers(usersRaw)
-			: [];
+		const members = Array.isArray(usersRaw) ? parseStandingsMembers(usersRaw) : [];
 		const self = findSelfInMembers(members, myUserId);
 
 		groups.push({
@@ -222,9 +218,7 @@ export function parseOverviewGroupStandings(payload: unknown): GroupStandings[] 
 		const code = parseOptionalString(
 			groupRecord?.code ?? groupRecord?.groupCode ?? record.code ?? record.groupCode,
 		);
-		const groupId = parseIdString(
-			groupRecord?.id ?? record.id ?? record.groupId ?? code ?? name,
-		);
+		const groupId = parseIdString(groupRecord?.id ?? record.id ?? record.groupId ?? code ?? name);
 		if (!groupId || !name) continue;
 
 		const usersRaw = record.users ?? record.members ?? record.rankings ?? record.standings;
@@ -304,9 +298,7 @@ export function extractRivalPronosFromOverview(
 				continue;
 			}
 
-			const pronos = parseRivalPronos(
-				Array.isArray(pronosRaw) ? { pronos: pronosRaw } : pronosRaw,
-			);
+			const pronos = parseRivalPronos(Array.isArray(pronosRaw) ? { pronos: pronosRaw } : pronosRaw);
 			if (pronos.length > 0) {
 				return pronos;
 			}
@@ -500,12 +492,8 @@ export function parseMatchesPayload(payload: unknown): Match[] {
 				awayTeam: parseOptionalString(awayTeamRaw?.name),
 				homeTeamId: parseInteger(homeTeamRaw?.id),
 				awayTeamId: parseInteger(awayTeamRaw?.id),
-				homeScore:
-					parseInteger(homeTeamRaw?.score) ??
-					parseInteger(m.homeScore),
-				awayScore:
-					parseInteger(awayTeamRaw?.score) ??
-					parseInteger(m.awayScore),
+				homeScore: parseInteger(homeTeamRaw?.score) ?? parseInteger(m.homeScore),
+				awayScore: parseInteger(awayTeamRaw?.score) ?? parseInteger(m.awayScore),
 			});
 		}
 	}

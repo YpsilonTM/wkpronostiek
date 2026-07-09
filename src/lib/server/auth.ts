@@ -83,7 +83,6 @@ async function loginViaNodeHelper(settings: Settings): Promise<string> {
 		});
 
 		let stdout = '';
-		let stderr = '';
 
 		const timeout = setTimeout(() => {
 			child.kill('SIGKILL');
@@ -94,8 +93,8 @@ async function loginViaNodeHelper(settings: Settings): Promise<string> {
 			stdout += chunk.toString();
 		});
 
-		child.stderr.on('data', (chunk: Buffer) => {
-			stderr += chunk.toString();
+		child.stderr.on('data', () => {
+			// Drain stderr without storing — may contain sensitive auth details.
 		});
 
 		child.on('error', (error) => {

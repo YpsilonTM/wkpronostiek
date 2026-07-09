@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	extractRivalPronosFromOverview,
 	parseGroupStandings,
 	parseGroups,
 	parseOverviewGroupStandings,
@@ -7,7 +8,6 @@ import {
 	parseRivalPronos,
 	parseStandingsMembers,
 	parseUserOverview,
-	extractRivalPronosFromOverview,
 } from './parse';
 
 describe('parseGroups', () => {
@@ -16,9 +16,7 @@ describe('parseGroups', () => {
 			groups: [{ id: 'g1', name: 'Familie', rank: 2, points: 110 }],
 		});
 
-		expect(groups).toEqual([
-			{ id: 'g1', name: 'Familie', code: null, rank: 2, points: 110 },
-		]);
+		expect(groups).toEqual([{ id: 'g1', name: 'Familie', code: null, rank: 2, points: 110 }]);
 	});
 
 	it('parses sporza nested groups with embedded users', () => {
@@ -38,9 +36,7 @@ describe('parseGroups', () => {
 			'42',
 		);
 
-		expect(groups).toEqual([
-			{ id: 'FAM', name: 'Familie', code: 'FAM', rank: 1, points: 120 },
-		]);
+		expect(groups).toEqual([{ id: 'FAM', name: 'Familie', code: 'FAM', rank: 1, points: 120 }]);
 	});
 
 	it('parses nested data.groups', () => {

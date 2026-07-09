@@ -54,4 +54,8 @@ export function getAuthCachePath(settings: Settings): string {
 	return getDataPath(path.basename(file));
 }
 
-export { AUTO_PREDICT_WINDOW_MS, MATCHES_CACHE_TTL_MS, MIRROR_FINAL_CHECK_MS } from '$lib/constants';
+export {
+	AUTO_PREDICT_WINDOW_MS,
+	MATCHES_CACHE_TTL_MS,
+	MIRROR_FINAL_CHECK_MS,
+} from '$lib/constants';

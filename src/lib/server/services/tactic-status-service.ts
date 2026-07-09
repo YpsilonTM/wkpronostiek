@@ -1,13 +1,13 @@
-import type { TacticStatus } from '$lib/types/tactic-status';
 import { resolveMyMember } from '$lib/types/tactic';
+import type { TacticStatus } from '$lib/types/tactic-status';
 import { getSettings } from '../config';
-import { isTacticEnabled } from './app-settings-service';
 import { attachCurrentPronos, isWithinAutoPredictWindow } from '../match-enrichment';
 import { PronotoolApiClient } from '../pronotool-api';
+import { isStandingsUsableForMirror } from '../standings';
 import { countRemainingMatches } from '../tactic';
 import { filterCatchableChasers, maxCatchUpPoints } from '../tactic-safety';
 import { getRivalFromSnapshot, loadTacticSnapshot } from '../tactic-service';
-import { isStandingsUsableForMirror } from '../standings';
+import { isTacticEnabled } from './app-settings-service';
 import { fetchMatchesCached, fetchUserPronosByMatchId } from './pronotool-service';
 
 let _cache: TacticStatus | null = null;
@@ -78,7 +78,9 @@ export async function getTacticStatus(forceRefresh = false): Promise<TacticStatu
 	}
 
 	const leadPoints =
-		myMember && rivalMember ? myMember.points - rivalMember.points : (snapshot.decision.leadPoints ?? null);
+		myMember && rivalMember
+			? myMember.points - rivalMember.points
+			: (snapshot.decision.leadPoints ?? null);
 
 	const remainingMatches = countRemainingMatches(allMatches);
 	const maxCatchUp = snapshot.decision.maxCatchUpPoints ?? maxCatchUpPoints(remainingMatches);

@@ -1,7 +1,7 @@
 import type { Match, MatchWithProno } from '$lib/types/match';
 import type { Prediction, PredictMatchesOptions } from '$lib/types/prediction';
 import type { Settings } from '$lib/types/settings';
-import type { TacticContext, TacticSnapshot, RivalProno } from '$lib/types/tactic';
+import type { RivalProno, TacticContext, TacticSnapshot } from '$lib/types/tactic';
 import {
 	autoPredictedTactics,
 	clearPredictionInFlight,
@@ -33,12 +33,12 @@ import {
 } from '../tactic';
 import { getRivalFromSnapshot, loadTacticSnapshot } from '../tactic-service';
 import { isTacticEnabled } from './app-settings-service';
-import { invalidateTacticStatusCache } from './tactic-status-service';
 import {
 	fetchMatchesCached,
 	fetchUserPronosByMatchId,
 	invalidateMatchesCache,
 } from './pronotool-service';
+import { invalidateTacticStatusCache } from './tactic-status-service';
 
 async function submitPredictions(
 	api: PronotoolApiClient,
@@ -446,11 +446,7 @@ export async function runMirrorFinalRecheck(): Promise<void> {
 		}
 
 		const rivalFingerprint = rivalPronosFingerprint(snapshot.rivalPronosByMatchId);
-		const matchesToUpdate = selectMirrorFinalRecheckMatches(
-			matches,
-			snapshot,
-			rivalFingerprint,
-		);
+		const matchesToUpdate = selectMirrorFinalRecheckMatches(matches, snapshot, rivalFingerprint);
 
 		if (matchesToUpdate.length === 0) {
 			pinoLogger.debug(
@@ -461,7 +457,8 @@ export async function runMirrorFinalRecheck(): Promise<void> {
 		}
 
 		const rival = getRivalFromSnapshot(snapshot);
-		const rivalName = rival?.name ?? snapshot.decision.rivalName ?? `#${settings.tactic.mirrorRank}`;
+		const rivalName =
+			rival?.name ?? snapshot.decision.rivalName ?? `#${settings.tactic.mirrorRank}`;
 
 		pinoLogger.info(
 			{

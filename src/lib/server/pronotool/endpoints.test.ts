@@ -14,8 +14,7 @@ describe('expandApiUrl', () => {
 
 describe('getStandingsUrlCandidates', () => {
 	it('puts configured URL first and deduplicates fallbacks', () => {
-		const configured =
-			'https://api.sporza.be/pronotool/1/groups/{groupId}/standings';
+		const configured = 'https://api.sporza.be/pronotool/1/groups/{groupId}/standings';
 		const urls = getStandingsUrlCandidates(configured, 'g1');
 
 		expect(urls[0]).toBe('https://api.sporza.be/pronotool/1/groups/g1/standings');
@@ -26,8 +25,7 @@ describe('getStandingsUrlCandidates', () => {
 
 describe('getRivalPronosUrlCandidates', () => {
 	it('includes configured and fallback rival-pronos URLs', () => {
-		const configured =
-			'https://api.sporza.be/pronotool/1/users/{userId}/pronos?groupId={groupId}';
+		const configured = 'https://api.sporza.be/pronotool/1/users/{userId}/pronos?groupId={groupId}';
 		const urls = getRivalPronosUrlCandidates(configured, 'u1', 'g1');
 
 		expect(urls[0]).toContain('users/u1');

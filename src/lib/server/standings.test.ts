@@ -34,7 +34,7 @@ function baseTacticConfig(overrides: Partial<TacticConfig> = {}): TacticConfig {
 
 const overviewGroups: GroupSummary[] = [
 	{ id: 'g-fam', name: 'Familie', rank: 1, points: 120 },
-	{ id: 'g-werk', name: 'Collega\'s', rank: 3, points: 90 },
+	{ id: 'g-werk', name: "Collega's", rank: 3, points: 90 },
 ];
 
 describe('resolveTargetGroup', () => {
@@ -112,7 +112,9 @@ describe('fetchGroupStandingsForConfig', () => {
 		};
 
 		const result = await fetchGroupStandingsForConfig(
-			{ tactic: baseTacticConfig({ groupName: 'Familie' }) } as import('$lib/types/settings').Settings,
+			{
+				tactic: baseTacticConfig({ groupName: 'Familie' }),
+			} as import('$lib/types/settings').Settings,
 			api as never,
 			[{ id: 'FAM', name: 'Familie', code: 'FAM', rank: 1, points: 120 }],
 			embedded,
@@ -130,7 +132,9 @@ describe('fetchGroupStandingsForConfig', () => {
 		};
 
 		const standings = await fetchGroupStandingsForConfig(
-			{ tactic: baseTacticConfig({ groupName: 'Familie' }) } as import('$lib/types/settings').Settings,
+			{
+				tactic: baseTacticConfig({ groupName: 'Familie' }),
+			} as import('$lib/types/settings').Settings,
 			api as never,
 			overviewGroups,
 			[],

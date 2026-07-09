@@ -1,10 +1,10 @@
 import type { Handle, ServerInit } from '@sveltejs/kit';
 import { building } from '$app/environment';
 import { ensureDataDir } from '$lib/server/config';
-import { initAppSettings } from '$lib/server/services/app-settings-service';
 import { pinoLogger } from '$lib/server/logger';
 import { importLegacyDataIfNeeded, runDatabaseMigrations } from '$lib/server/migrate';
 import { startScheduler } from '$lib/server/scheduler';
+import { initAppSettings } from '$lib/server/services/app-settings-service';
 import { runPredictUpcoming } from '$lib/server/services/prediction-service';
 
 export const init: ServerInit = async () => {

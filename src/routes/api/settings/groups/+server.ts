@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { jsonError } from '$lib/server/api-response';
-import { getSettings } from '$lib/server/config';
 import { resolveApiAuthorization } from '$lib/server/auth';
+import { getSettings } from '$lib/server/config';
 import { PronotoolApiClient } from '$lib/server/pronotool-api';
 import type { RequestHandler } from './$types';
 

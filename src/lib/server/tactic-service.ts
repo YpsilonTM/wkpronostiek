@@ -3,10 +3,10 @@ import type { Settings } from '$lib/types/settings';
 import type { RivalProno, TacticSnapshot } from '$lib/types/tactic';
 import { getMemberByRank } from '$lib/types/tactic';
 import { resolveApiAuthorization } from './auth';
-import { isTacticEnabled } from './services/app-settings-service';
 import { pinoLogger } from './logger';
 import type { PronotoolApiClient } from './pronotool-api';
 import { fetchRivalPronosByMatchId } from './rival-pronos';
+import { isTacticEnabled } from './services/app-settings-service';
 import { fetchGroupStandingsForConfig } from './standings';
 import { decideTactic, needsRivalPronos } from './tactic';
 

@@ -27,9 +27,7 @@ export function resolveTargetGroup(
 
 	if (config.groupCode) {
 		const normalizedCode = normalizeName(config.groupCode);
-		const byCode = overviewGroups.find(
-			(g) => g.code && normalizeName(g.code) === normalizedCode,
-		);
+		const byCode = overviewGroups.find((g) => g.code && normalizeName(g.code) === normalizedCode);
 		if (byCode) return byCode;
 	}
 

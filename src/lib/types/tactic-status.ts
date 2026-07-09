@@ -1,6 +1,10 @@
-import type { ResolvedTacticMode, TacticMode } from '$lib/types/tactic';
-import type { ChaserThreat, TacticDangerLevel } from '$lib/types/tactic';
 import type { GroupStandingsSource } from '$lib/types/standings';
+import type {
+	ChaserThreat,
+	ResolvedTacticMode,
+	TacticDangerLevel,
+	TacticMode,
+} from '$lib/types/tactic';
 
 export interface TacticStatus {
 	enabled: boolean;

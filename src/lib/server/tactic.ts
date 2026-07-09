@@ -85,10 +85,7 @@ function shouldMirrorByAutoCriteria(input: DecideTacticInput): TacticDecision | 
 	};
 }
 
-function buildFallbackDecision(
-	input: DecideTacticInput,
-	reason: string,
-): TacticDecision {
+function buildFallbackDecision(input: DecideTacticInput, reason: string): TacticDecision {
 	const { config, standings, allMatches, myUserId } = input;
 	const me = standings ? resolveMyMember(standings, myUserId) : undefined;
 	const remaining = countRemainingMatches(allMatches);
@@ -148,7 +145,10 @@ export function decideTactic(input: DecideTacticInput): TacticDecision {
 		return autoMirror;
 	}
 
-	return buildFallbackDecision(input, `Auto: criteria niet voldaan, fallback=${config.autoFallback}`);
+	return buildFallbackDecision(
+		input,
+		`Auto: criteria niet voldaan, fallback=${config.autoFallback}`,
+	);
 }
 
 export function buildMirrorPredictions(
@@ -200,13 +200,7 @@ export function buildTacticContext(
 
 	const safety =
 		me && config
-			? analyzeMirrorSafety(
-					me,
-					standings,
-					remainingMatches,
-					config,
-					leadOverRival ?? 0,
-				)
+			? analyzeMirrorSafety(me, standings, remainingMatches, config, leadOverRival ?? 0)
 			: null;
 
 	return {

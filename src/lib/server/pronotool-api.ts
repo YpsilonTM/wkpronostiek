@@ -3,6 +3,7 @@ import type { PronoSubmission } from '$lib/types/prediction';
 import type { Settings } from '$lib/types/settings';
 import type { GroupStandings } from '$lib/types/standings';
 import type { RivalProno } from '$lib/types/tactic';
+import { pinoLogger } from './logger';
 import { getRivalPronosUrlCandidates, getStandingsUrlCandidates } from './pronotool/endpoints';
 import {
 	HttpStatusError,
@@ -17,7 +18,6 @@ import {
 	parseRivalPronos,
 	parseUserOverview,
 } from './pronotool/parse';
-import { pinoLogger } from './logger';
 
 export {
 	HttpStatusError,
@@ -99,7 +99,10 @@ export class PronotoolApiClient {
 					continue;
 				}
 
-				pinoLogger.debug({ url, groupId, memberCount: standings.members.length }, 'Standings geladen');
+				pinoLogger.debug(
+					{ url, groupId, memberCount: standings.members.length },
+					'Standings geladen',
+				);
 				return standings;
 			} catch (error) {
 				lastError = error instanceof Error ? error : new Error(String(error));

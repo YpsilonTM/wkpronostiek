@@ -1,6 +1,6 @@
+import type { TacticAutoFallback, TacticConfig, TacticMode } from '$lib/types/tactic';
 import type { TacticUiSettings } from '$lib/types/tactic-settings';
 import { TACTIC_UI_MODES } from '$lib/types/tactic-settings';
-import type { TacticAutoFallback, TacticConfig, TacticMode } from '$lib/types/tactic';
 import { prisma } from '../db';
 
 const TACTIC_SETTINGS_KEY = 'tactic';
@@ -92,13 +92,7 @@ async function migrateLegacyFlatSettings(): Promise<TacticUiSettings | null> {
 	const rows = await prisma.appSetting.findMany({
 		where: {
 			key: {
-				in: [
-					'tacticEnabled',
-					'tacticMode',
-					'tacticGroupName',
-					'tacticGroupId',
-					'tacticGroupCode',
-				],
+				in: ['tacticEnabled', 'tacticMode', 'tacticGroupName', 'tacticGroupId', 'tacticGroupCode'],
 			},
 		},
 	});
@@ -125,13 +119,7 @@ async function migrateLegacyFlatSettings(): Promise<TacticUiSettings | null> {
 	await prisma.appSetting.deleteMany({
 		where: {
 			key: {
-				in: [
-					'tacticEnabled',
-					'tacticMode',
-					'tacticGroupName',
-					'tacticGroupId',
-					'tacticGroupCode',
-				],
+				in: ['tacticEnabled', 'tacticMode', 'tacticGroupName', 'tacticGroupId', 'tacticGroupCode'],
 			},
 		},
 	});

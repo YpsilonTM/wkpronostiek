@@ -1,8 +1,8 @@
 import type { Settings } from '$lib/types/settings';
 import type { RivalProno } from '$lib/types/tactic';
-import { extractRivalPronosFromOverview } from './pronotool/parse';
 import { resolveApiAuthorization } from './auth';
 import { pinoLogger } from './logger';
+import { extractRivalPronosFromOverview } from './pronotool/parse';
 import type { PronotoolApiClient } from './pronotool-api';
 import { isUnauthorizedHttpError } from './pronotool-api';
 
