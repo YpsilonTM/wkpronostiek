@@ -40,10 +40,20 @@ export const GET: RequestHandler = async () => {
 			if (!stored) {
 				return ui;
 			}
+
+			const isMirror = stored.model === 'mirror';
+			const mirrorNameMatch = stored.reasoning.match(/gekopieerd van (.+)$/i);
+
 			return {
 				...ui,
 				reasoning: stored.reasoning,
 				searchAnalysis: stored.searchAnalysis,
+				tactic: isMirror ? 'mirror' : stored.model ? 'ai' : null,
+				tacticLabel: isMirror
+					? mirrorNameMatch
+						? `Spiegelt ${mirrorNameMatch[1]}`
+						: 'Spiegelt rival'
+					: null,
 			};
 		});
 		return json(enriched);

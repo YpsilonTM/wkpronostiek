@@ -27,8 +27,11 @@ function baseConfig(overrides: Partial<TacticConfig> = {}): TacticConfig {
 		mode: 'auto',
 		groupName: 'Test',
 		groupId: 'g1',
+		groupCode: '',
 		mirrorRank: 2,
 		leadThreshold: 0,
+		cautionLead: 40,
+		criticalLead: 20,
 		remainingMatches: 8,
 		knockoutOnly: false,
 		autoFallback: 'ai_tactic',
@@ -43,6 +46,9 @@ function baseConfig(overrides: Partial<TacticConfig> = {}): TacticConfig {
 const standings: GroupStandings = {
 	groupId: 'g1',
 	groupName: 'Test',
+	groupCode: 'TEST',
+	complete: true,
+	source: 'overview-embedded',
 	members: [
 		{ userId: 'me', name: 'Me', rank: 1, points: 120 },
 		{ userId: 'rival', name: 'Rival', rank: 2, points: 115 },
@@ -51,7 +57,29 @@ const standings: GroupStandings = {
 };
 
 describe('decideTactic', () => {
-	it('mirrors in auto mode when #1 with lead and few matches left', () => {
+	it('mirrors in auto mode when safely ahead of all chasers', () => {
+		const safeStandings = {
+			...standings,
+			members: [
+				{ userId: 'me', name: 'Me', rank: 1, points: 120 },
+				{ userId: 'rival', name: 'Rival', rank: 2, points: 115 },
+				{ userId: 'third', name: 'Third', rank: 3, points: 70 },
+			],
+		};
+
+		const decision = decideTactic({
+			config: baseConfig(),
+			standings: safeStandings,
+			allMatches: [baseMatch()],
+			myUserId: 'me',
+			matchesInBatch: [baseMatch()],
+		});
+
+		expect(decision.mode).toBe('mirror');
+		expect(decision.rivalUserId).toBe('rival');
+	});
+
+	it('falls back to ai_tactic when #3 is too close', () => {
 		const decision = decideTactic({
 			config: baseConfig(),
 			standings,
@@ -60,8 +88,28 @@ describe('decideTactic', () => {
 			matchesInBatch: [baseMatch()],
 		});
 
-		expect(decision.mode).toBe('mirror');
-		expect(decision.rivalUserId).toBe('rival');
+		expect(decision.mode).toBe('ai_tactic');
+		expect(decision.dangerLevel).toBe('critical');
+		expect(decision.reason).toContain('voorzichtigheidsdrempel');
+	});
+
+	it('falls back when standings are incomplete', () => {
+		const incomplete = {
+			...standings,
+			complete: false,
+			source: 'overview-fallback' as const,
+			members: [{ userId: 'me', name: 'Me', rank: 1, points: 120 }],
+		};
+
+		const decision = decideTactic({
+			config: baseConfig(),
+			standings: incomplete,
+			allMatches: [baseMatch()],
+			myUserId: 'me',
+			matchesInBatch: [baseMatch()],
+		});
+
+		expect(decision.mode).toBe('ai_tactic');
 	});
 
 	it('falls back when not rank 1', () => {
@@ -72,7 +120,6 @@ describe('decideTactic', () => {
 				{ userId: 'me', name: 'Me', rank: 2, points: 115 },
 			],
 		};
-
 		const decision = decideTactic({
 			config: baseConfig(),
 			standings: behind,

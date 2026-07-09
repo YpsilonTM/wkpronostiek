@@ -1,6 +1,7 @@
 import type { Handle, ServerInit } from '@sveltejs/kit';
 import { building } from '$app/environment';
 import { ensureDataDir } from '$lib/server/config';
+import { initAppSettings } from '$lib/server/services/app-settings-service';
 import { pinoLogger } from '$lib/server/logger';
 import { importLegacyDataIfNeeded, runDatabaseMigrations } from '$lib/server/migrate';
 import { startScheduler } from '$lib/server/scheduler';
@@ -11,6 +12,7 @@ export const init: ServerInit = async () => {
 	await ensureDataDir();
 	await runDatabaseMigrations();
 	await importLegacyDataIfNeeded();
+	await initAppSettings();
 	startScheduler();
 
 	if (!process.env.GEMINI_API_KEY?.trim()) {

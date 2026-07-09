@@ -3,6 +3,7 @@ export const SPORZA_MATCH_POINTS = {
 	exactScore: 20,
 	goalDifference: 14,
 	correctWinner: 10,
+	participation: 1,
 } as const;
 
 export type SporzaScoreTier = 20 | 14 | 10 | 0;
@@ -81,7 +82,7 @@ export function describeScoringRules(isKnockout: boolean): string {
 		`- ${SPORZA_MATCH_POINTS.exactScore} punten: exacte score na 90 minuten`,
 		`- ${SPORZA_MATCH_POINTS.goalDifference} punten: juist doelpuntenverschil (saldo)`,
 		`- ${SPORZA_MATCH_POINTS.correctWinner} punten: juiste winnende ploeg`,
-		'- 0 punten: geen van bovenstaande',
+		`- ${SPORZA_MATCH_POINTS.participation} punt: ingevulde prono zonder juiste tier (deelname)`,
 	];
 
 	if (isKnockout) {

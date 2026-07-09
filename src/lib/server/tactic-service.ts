@@ -3,6 +3,7 @@ import type { Settings } from '$lib/types/settings';
 import type { RivalProno, TacticSnapshot } from '$lib/types/tactic';
 import { getMemberByRank } from '$lib/types/tactic';
 import { resolveApiAuthorization } from './auth';
+import { isTacticEnabled } from './services/app-settings-service';
 import { pinoLogger } from './logger';
 import type { PronotoolApiClient } from './pronotool-api';
 import { fetchRivalPronosByMatchId } from './rival-pronos';
@@ -22,15 +23,27 @@ export async function loadTacticSnapshot(
 		myUserId: null,
 	};
 
-	if (settings.tactic.mode === 'ai' && !settings.tactic.geminiContext) {
-		return { ...fallback, decision: { mode: 'ai', reason: 'TACTIC_MODE=ai' } };
+	if (!isTacticEnabled()) {
+		return { ...fallback, decision: { mode: 'ai', reason: 'Eindfase-tactiek uitgeschakeld' } };
 	}
 
 	try {
 		const authorization = await resolveApiAuthorization(settings);
 		const overview = await api.fetchUserOverview(authorization);
 		const myUserId = overview.userId ?? null;
-		const standings = await fetchGroupStandingsForConfig(settings, api, overview.groups ?? []);
+		const standings = await fetchGroupStandingsForConfig(
+			settings,
+			api,
+			overview.groups ?? [],
+			overview.embeddedStandings ?? [],
+		);
+
+		if (standings && !standings.complete) {
+			pinoLogger.warn(
+				{ groupId: standings.groupId, source: standings.source },
+				'Onvolledig klassement — auto-mirror uitgeschakeld tot standings API werkt.',
+			);
+		}
 
 		const decision = decideTactic({
 			config: settings.tactic,
@@ -49,19 +62,14 @@ export async function loadTacticSnapshot(
 				: undefined);
 
 		if (rivalUserId && standings?.groupId) {
-			try {
-				rivalPronosByMatchId = await fetchRivalPronosByMatchId(
-					settings,
-					api,
-					rivalUserId,
-					standings.groupId,
-				);
-			} catch (err) {
-				pinoLogger.warn(
-					{ err, rivalUserId },
-					'Kon rival-pronos niet ophalen; tactic gaat verder zonder.',
-				);
-			}
+			rivalPronosByMatchId = await fetchRivalPronosByMatchId(
+				settings,
+				api,
+				rivalUserId,
+				standings.groupId,
+				standings.groupCode ?? undefined,
+				overview.sourcePayload,
+			);
 		}
 
 		return {

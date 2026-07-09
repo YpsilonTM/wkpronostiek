@@ -1,6 +1,6 @@
 import { Cron } from 'croner';
 import { pinoLogger } from './logger';
-import { runPredictUpcoming } from './services/prediction-service';
+import { runMirrorFinalRecheck, runPredictUpcoming } from './services/prediction-service';
 
 let started = false;
 
@@ -16,6 +16,15 @@ export function startScheduler(): void {
 			await runPredictUpcoming();
 		} catch (err) {
 			pinoLogger.error({ err }, 'Fout tijdens automatische run');
+		}
+	});
+
+	pinoLogger.info('🪞 Laatste mirror-check ingepland (elke minuut - * * * * *).');
+	new Cron('* * * * *', async () => {
+		try {
+			await runMirrorFinalRecheck();
+		} catch (err) {
+			pinoLogger.error({ err }, 'Fout tijdens laatste mirror-check');
 		}
 	});
 }

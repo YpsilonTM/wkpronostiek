@@ -1,57 +1,131 @@
-import type { Match, UserOverview, UserProno } from '$lib/types/match';
+import type { Match, UserOverview } from '$lib/types/match';
 import type { PronoSubmission } from '$lib/types/prediction';
 import type { Settings } from '$lib/types/settings';
-import type { GroupMember, GroupStandings, GroupSummary } from '$lib/types/standings';
+import type { GroupStandings } from '$lib/types/standings';
 import type { RivalProno } from '$lib/types/tactic';
+import { getRivalPronosUrlCandidates, getStandingsUrlCandidates } from './pronotool/endpoints';
+import {
+	HttpStatusError,
+	isForbiddenHttpError,
+	isRetryableHttpError,
+	isUnauthorizedHttpError,
+	PronotoolParseError,
+} from './pronotool/errors';
+import {
+	parseGroupStandings,
+	parseMatchesPayload,
+	parseRivalPronos,
+	parseUserOverview,
+} from './pronotool/parse';
+import { pinoLogger } from './logger';
 
-class HttpStatusError extends Error {
-	status: number;
+export {
+	HttpStatusError,
+	isAuthHttpError,
+	isForbiddenHttpError,
+	isUnauthorizedHttpError,
+	PronotoolParseError,
+} from './pronotool/errors';
 
-	constructor(status: number, message?: string) {
-		super(message || `HTTP ${status}`);
-		this.name = 'HttpStatusError';
-		this.status = status;
-	}
-}
+const DEFAULT_TIMEOUT_MS = 30_000;
+const RETRY_DELAY_MS = 1_000;
 
 export class PronotoolApiClient {
 	constructor(private settings: Settings) {}
 
 	async fetchUserOverview(authorization: string): Promise<UserOverview> {
-		const response = await this.#fetchWithTimeout(this.settings.userOverviewApiUrl, {
-			method: 'GET',
-			headers: this.#authHeaders(authorization),
-		});
-		await this.#raiseForStatus(response);
+		const payload = await this.#fetchJson(
+			this.settings.userOverviewApiUrl,
+			{
+				method: 'GET',
+				headers: this.#authHeaders(authorization),
+			},
+			{ retryOnTransient: true },
+		);
 
-		const payload = await response.json();
-		const pronosRaw = Array.isArray(payload?.pronos) ? payload.pronos : [];
-
+		const parsed = parseUserOverview(payload);
 		return {
-			userId: this.#parseOptionalString(payload?.userId ?? payload?.user?.id),
-			groups: this.#parseGroups(payload),
-			pronos: pronosRaw
-				.map((item: unknown) => this.#parseProno(item))
-				.filter(Boolean) as UserProno[],
+			userId: parsed.userId,
+			groups: parsed.groups,
+			embeddedStandings: parsed.embeddedStandings,
+			pronos: parsed.pronos,
+			sourcePayload: payload,
 		};
 	}
 
 	async fetchGroupStandings(authorization: string, groupId: string): Promise<GroupStandings> {
-		const url = this.#expandUrl(this.settings.tactic.standingsApiUrl, { groupId });
-		const response = await this.#fetchWithTimeout(url, {
-			method: 'GET',
-			headers: this.#authHeaders(authorization),
-		});
-		await this.#raiseForStatus(response);
+		return this.fetchGroupStandingsWithFallback(authorization, groupId);
+	}
 
-		const payload = await response.json();
-		const groupName =
-			this.#parseOptionalString(payload?.name ?? payload?.groupName) ||
-			this.settings.tactic.groupName ||
-			groupId;
-		const members = this.#parseStandingsMembers(payload);
+	async fetchGroupStandingsWithFallback(
+		authorization: string,
+		groupId: string,
+	): Promise<GroupStandings> {
+		const urls = getStandingsUrlCandidates(this.settings.tactic.standingsApiUrl, groupId);
+		let lastError: Error | undefined;
 
-		return { groupId, groupName, members };
+		for (const url of urls) {
+			try {
+				const payload = await this.#fetchJson(
+					url,
+					{
+						method: 'GET',
+						headers: this.#authHeaders(authorization),
+					},
+					{ retryOnTransient: true },
+				);
+
+				const standings = parseGroupStandings(
+					payload,
+					groupId,
+					this.settings.tactic.groupName || groupId,
+				);
+
+				if (standings.members.length === 0) {
+					lastError = new PronotoolParseError('Standings response bevat geen leden', url);
+					pinoLogger.debug({ url, groupId }, 'Standings URL gaf lege ledenlijst');
+					continue;
+				}
+
+				if (!standings.complete) {
+					pinoLogger.debug(
+						{ url, groupId, memberCount: standings.members.length },
+						'Standings URL gaf onvolledig klassement; probeer volgende URL',
+					);
+					lastError = new PronotoolParseError(
+						`Standings response bevat slechts ${standings.members.length} lid/leden`,
+						url,
+					);
+					continue;
+				}
+
+				pinoLogger.debug({ url, groupId, memberCount: standings.members.length }, 'Standings geladen');
+				return standings;
+			} catch (error) {
+				lastError = error instanceof Error ? error : new Error(String(error));
+
+				if (isUnauthorizedHttpError(error)) {
+					throw error;
+				}
+
+				if (error instanceof HttpStatusError && error.status === 404) {
+					pinoLogger.debug({ url, groupId, status: error.status }, 'Standings URL niet gevonden');
+					continue;
+				}
+
+				if (isForbiddenHttpError(error)) {
+					pinoLogger.debug({ url, groupId }, 'Standings URL forbidden; probeer volgende');
+					continue;
+				}
+
+				pinoLogger.debug(
+					{ url, groupId, err: lastError.message },
+					'Standings URL mislukt; probeer volgende',
+				);
+			}
+		}
+
+		throw lastError ?? new Error(`Geen werkende standings URL voor group ${groupId}`);
 	}
 
 	async fetchRivalPronos(
@@ -59,82 +133,85 @@ export class PronotoolApiClient {
 		userId: string,
 		groupId: string,
 	): Promise<RivalProno[]> {
-		const url = this.#expandUrl(this.settings.tactic.rivalPronosApiUrl, { userId, groupId });
-		const response = await this.#fetchWithTimeout(url, {
-			method: 'GET',
-			headers: this.#authHeaders(authorization),
-		});
-		await this.#raiseForStatus(response);
+		return this.fetchRivalPronosWithFallback(authorization, userId, groupId);
+	}
 
-		const payload = await response.json();
-		const pronosRaw = Array.isArray(payload?.pronos)
-			? payload.pronos
-			: Array.isArray(payload)
-				? payload
-				: [];
+	async fetchRivalPronosWithFallback(
+		authorization: string,
+		userId: string,
+		groupId: string,
+		groupCode?: string,
+	): Promise<RivalProno[]> {
+		const urls = getRivalPronosUrlCandidates(
+			this.settings.tactic.rivalPronosApiUrl,
+			userId,
+			groupId,
+			groupCode,
+		);
+		let lastError: Error | undefined;
 
-		const results: RivalProno[] = [];
-		for (const item of pronosRaw) {
-			const parsed = this.#parseRivalProno(item);
-			if (parsed) {
-				results.push(parsed);
+		for (const url of urls) {
+			try {
+				const payload = await this.#fetchJson(
+					url,
+					{
+						method: 'GET',
+						headers: this.#authHeaders(authorization),
+					},
+					{ retryOnTransient: true },
+				);
+
+				const pronos = parseRivalPronos(payload);
+				pinoLogger.debug(
+					{ url, userId, groupId, pronoCount: pronos.length },
+					'Rival-pronos geladen',
+				);
+				return pronos;
+			} catch (error) {
+				lastError = error instanceof Error ? error : new Error(String(error));
+
+				if (isUnauthorizedHttpError(error)) {
+					throw error;
+				}
+
+				if (error instanceof HttpStatusError && error.status === 404) {
+					pinoLogger.debug({ url, userId, status: error.status }, 'Rival-pronos URL niet gevonden');
+					continue;
+				}
+
+				if (isForbiddenHttpError(error)) {
+					pinoLogger.debug(
+						{ url, userId, groupId, groupCode },
+						'Rival-pronos URL forbidden (vaak: nog niet zichtbaar); probeer volgende',
+					);
+					continue;
+				}
+
+				pinoLogger.debug(
+					{ url, userId, err: lastError.message },
+					'Rival-pronos URL mislukt; probeer volgende',
+				);
 			}
 		}
-		return results;
+
+		throw lastError ?? new Error(`Geen werkende rival-pronos URL voor user ${userId}`);
 	}
 
 	async fetchMatches(): Promise<Match[]> {
-		const response = await this.#fetchWithTimeout(this.settings.matchesApiUrl, {
-			method: 'GET',
-			headers: {
-				accept: '*/*',
-				origin: 'https://wkpronostiek.sporza.be',
-				referer: 'https://wkpronostiek.sporza.be/',
+		const payload = await this.#fetchJson(
+			this.settings.matchesApiUrl,
+			{
+				method: 'GET',
+				headers: {
+					accept: '*/*',
+					origin: 'https://wkpronostiek.sporza.be',
+					referer: 'https://wkpronostiek.sporza.be/',
+				},
 			},
-		});
-		await this.#raiseForStatus(response);
+			{ retryOnTransient: true },
+		);
 
-		const payload = await response.json();
-		const matchdays = Array.isArray(payload) ? payload : [];
-
-		const results: Match[] = [];
-
-		for (const day of matchdays as Array<{ matches?: unknown[]; name?: string }>) {
-			for (const raw of Array.isArray(day.matches) ? day.matches : []) {
-				const m = raw as Record<string, unknown>;
-				const matchId = Number(m.matchId);
-				if (!Number.isInteger(matchId)) {
-					continue;
-				}
-				const homeTeamRaw = m.homeTeam as { id?: number; name?: string } | null;
-				const awayTeamRaw = m.awayTeam as { id?: number; name?: string } | null;
-
-				results.push({
-					matchId,
-					startTime: m.startTime as string,
-					status: m.status as string,
-					phaseName: (m.phaseName as string) ?? null,
-					phaseType: (m.phaseType as string) ?? null,
-					matchday: (day.name as string) ?? null,
-					homeTeam: homeTeamRaw?.name ?? null,
-					awayTeam: awayTeamRaw?.name ?? null,
-					homeTeamId: homeTeamRaw?.id ?? null,
-					awayTeamId: awayTeamRaw?.id ?? null,
-					homeScore: Number.isInteger((m.homeTeam as { score?: number })?.score)
-						? ((m.homeTeam as { score: number }).score as number)
-						: Number.isInteger(m.homeScore)
-							? (m.homeScore as number)
-							: null,
-					awayScore: Number.isInteger((m.awayTeam as { score?: number })?.score)
-						? ((m.awayTeam as { score: number }).score as number)
-						: Number.isInteger(m.awayScore)
-							? (m.awayScore as number)
-							: null,
-				});
-			}
-		}
-
-		return results;
+		return parseMatchesPayload(payload);
 	}
 
 	async isAuthorizationValid(authorization: string): Promise<boolean> {
@@ -142,7 +219,7 @@ export class PronotoolApiClient {
 			await this.fetchUserOverview(authorization);
 			return true;
 		} catch (error) {
-			if (error instanceof HttpStatusError && (error.status === 401 || error.status === 403)) {
+			if (isUnauthorizedHttpError(error)) {
 				return false;
 			}
 			throw error;
@@ -159,16 +236,19 @@ export class PronotoolApiClient {
 			points: prono.points ?? null,
 		}));
 
-		const response = await this.#fetchWithTimeout(this.settings.pronoApiUrl, {
-			method: 'POST',
-			headers: {
-				...this.#authHeaders(authorization),
-				'content-type': 'application/json',
+		await this.#fetchJson(
+			this.settings.pronoApiUrl,
+			{
+				method: 'POST',
+				headers: {
+					...this.#authHeaders(authorization),
+					'content-type': 'application/json',
+				},
+				body: JSON.stringify(payload),
 			},
-			body: JSON.stringify(payload),
-		});
+			{ retryOnTransient: true, expectJson: false },
+		);
 
-		await this.#raiseForStatus(response);
 		return payload.length;
 	}
 
@@ -181,24 +261,64 @@ export class PronotoolApiClient {
 		};
 	}
 
-	#expandUrl(template: string, params: Record<string, string>): string {
-		let url = template;
-		for (const [key, value] of Object.entries(params)) {
-			url = url.replaceAll(`{${key}}`, encodeURIComponent(value));
+	async #fetchJson(
+		url: string,
+		options: RequestInit,
+		config: { retryOnTransient?: boolean; expectJson?: boolean } = {},
+	): Promise<unknown> {
+		const { retryOnTransient = false, expectJson = true } = config;
+		let lastError: unknown;
+
+		for (let attempt = 0; attempt < (retryOnTransient ? 2 : 1); attempt += 1) {
+			try {
+				const response = await this.#fetchWithTimeout(url, options);
+				await this.#raiseForStatus(response, url);
+
+				if (!expectJson) {
+					return null;
+				}
+
+				return await this.#parseJsonBody(response, url);
+			} catch (error) {
+				lastError = error;
+				if (!retryOnTransient || attempt > 0 || !isRetryableHttpError(error)) {
+					throw error;
+				}
+				pinoLogger.debug({ url, attempt: attempt + 1 }, 'Tijdelijke API-fout; opnieuw proberen');
+				await this.#sleep(RETRY_DELAY_MS);
+			}
 		}
-		return url;
+
+		throw lastError;
 	}
 
-	async #raiseForStatus(response: Response): Promise<void> {
+	async #raiseForStatus(response: Response, url: string): Promise<void> {
 		if (response.ok) {
 			return;
 		}
 
 		const text = await response.text();
-		throw new HttpStatusError(response.status, text || `HTTP ${response.status}`);
+		throw new HttpStatusError(response.status, text || `HTTP ${response.status}`, url);
 	}
 
-	async #fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 30000): Promise<Response> {
+	async #parseJsonBody(response: Response, url: string): Promise<unknown> {
+		const text = await response.text();
+		if (!text.trim()) {
+			return null;
+		}
+
+		try {
+			return JSON.parse(text);
+		} catch {
+			throw new PronotoolParseError(`Ongeldige JSON-response van ${url}`, url);
+		}
+	}
+
+	async #fetchWithTimeout(
+		url: string,
+		options: RequestInit,
+		timeoutMs = DEFAULT_TIMEOUT_MS,
+	): Promise<Response> {
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -217,126 +337,7 @@ export class PronotoolApiClient {
 		}
 	}
 
-	#parseOptionalString(value: unknown): string | null {
-		if (value === null || value === undefined) return null;
-		const text = String(value).trim();
-		return text || null;
-	}
-
-	#parseGroups(payload: Record<string, unknown>): GroupSummary[] {
-		const rawGroups = payload.groups ?? payload.competitions ?? payload.minicompetitions;
-		if (!Array.isArray(rawGroups)) {
-			return [];
-		}
-
-		const groups: GroupSummary[] = [];
-		for (const item of rawGroups) {
-			if (!item || typeof item !== 'object') continue;
-			const record = item as Record<string, unknown>;
-			const id = this.#parseOptionalString(record.id ?? record.groupId);
-			const name = this.#parseOptionalString(record.name ?? record.groupName);
-			if (!id || !name) continue;
-
-			groups.push({
-				id,
-				name,
-				rank: Number.isInteger(record.rank) ? (record.rank as number) : null,
-				points: Number.isInteger(record.points) ? (record.points as number) : null,
-			});
-		}
-		return groups;
-	}
-
-	#parseStandingsMembers(payload: unknown): GroupMember[] {
-		const record =
-			payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
-		const raw =
-			record.members ??
-			record.standings ??
-			record.ranking ??
-			record.participants ??
-			(Array.isArray(payload) ? payload : []);
-
-		if (!Array.isArray(raw)) {
-			return [];
-		}
-
-		const members: GroupMember[] = [];
-		for (let index = 0; index < raw.length; index += 1) {
-			const item = raw[index];
-			if (!item || typeof item !== 'object') continue;
-			const row = item as Record<string, unknown>;
-			const userId = this.#parseOptionalString(
-				row.userId ?? row.id ?? (row.user as { id?: string } | undefined)?.id,
-			);
-			const name = this.#parseOptionalString(
-				row.name ?? row.displayName ?? (row.user as { name?: string } | undefined)?.name,
-			);
-			const points = Number(row.points ?? row.score ?? row.totalPoints ?? 0);
-			const rank = Number.isInteger(row.rank)
-				? (row.rank as number)
-				: Number.isInteger(row.position)
-					? (row.position as number)
-					: index + 1;
-
-			if (!userId || !name) continue;
-			members.push({ userId, name, rank, points: Number.isFinite(points) ? points : 0 });
-		}
-
-		return members.sort((a, b) => a.rank - b.rank);
-	}
-
-	#parseProno(item: unknown): UserProno | null {
-		if (!item || typeof item !== 'object') {
-			return null;
-		}
-
-		const record = item as Record<string, unknown>;
-		const homeScore = record.homeScore ?? null;
-		const awayScore = record.awayScore ?? null;
-		const matchId = Number(record.matchId);
-
-		if (!Number.isInteger(matchId)) {
-			return null;
-		}
-
-		return {
-			matchId,
-			homeScore: homeScore === null ? null : Number(homeScore),
-			awayScore: awayScore === null ? null : Number(awayScore),
-			modifiedTime: typeof record.modifiedTime === 'string' ? record.modifiedTime : null,
-			points: Number.isInteger(record.points) ? (record.points as number) : null,
-		};
-	}
-
-	#parseRivalProno(item: unknown): RivalProno | null {
-		if (!item || typeof item !== 'object') {
-			return null;
-		}
-
-		const record = item as Record<string, unknown>;
-		const matchId = Number(record.matchId);
-		const homeScore = record.homeScore;
-		const awayScore = record.awayScore;
-
-		if (
-			!Number.isInteger(matchId) ||
-			homeScore === null ||
-			homeScore === undefined ||
-			awayScore === null ||
-			awayScore === undefined
-		) {
-			return null;
-		}
-
-		const shootoutRaw = record.shootoutWinner;
-		const shootoutWinner = shootoutRaw === 0 || shootoutRaw === 1 ? (shootoutRaw as 0 | 1) : null;
-
-		return {
-			matchId,
-			homeScore: Number(homeScore),
-			awayScore: Number(awayScore),
-			shootoutWinner,
-		};
+	#sleep(ms: number): Promise<void> {
+		return new Promise((resolve) => setTimeout(resolve, ms));
 	}
 }

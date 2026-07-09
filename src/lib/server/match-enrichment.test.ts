@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { AUTO_PREDICT_WINDOW_MS } from '$lib/constants';
+import { AUTO_PREDICT_WINDOW_MS, MIRROR_FINAL_CHECK_MS } from '$lib/constants';
 import {
 	attachCurrentPronos,
 	enrichMatchForUi,
 	getUpcomingMatches,
 	isKnockoutMatch,
 	isWithinAutoPredictWindow,
+	isWithinMirrorFinalCheckWindow,
 } from '$lib/server/match-enrichment';
 import type { MatchWithProno } from '$lib/types/match';
 
@@ -43,6 +44,18 @@ describe('isWithinAutoPredictWindow', () => {
 	it('returns false when kickoff is in the past', () => {
 		const startTime = new Date(Date.now() - 60_000).toISOString();
 		expect(isWithinAutoPredictWindow(startTime)).toBe(false);
+	});
+});
+
+describe('isWithinMirrorFinalCheckWindow', () => {
+	it('returns true when kickoff is within one minute', () => {
+		const startTime = new Date(Date.now() + 30 * 1000).toISOString();
+		expect(isWithinMirrorFinalCheckWindow(startTime)).toBe(true);
+	});
+
+	it('returns false when kickoff is more than one minute away', () => {
+		const startTime = new Date(Date.now() + MIRROR_FINAL_CHECK_MS + 5_000).toISOString();
+		expect(isWithinMirrorFinalCheckWindow(startTime)).toBe(false);
 	});
 });
 

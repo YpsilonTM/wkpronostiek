@@ -34,6 +34,9 @@ export interface UserOverview {
 	userId?: string | null;
 	pronos: UserProno[];
 	groups?: import('./standings').GroupSummary[];
+	embeddedStandings?: import('./standings').GroupStandings[];
+	/** Raw overview JSON (server-side only) for embedded rival-pronos */
+	sourcePayload?: unknown;
 }
 
 export interface UserProno {

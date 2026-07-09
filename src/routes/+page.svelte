@@ -1,12 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import StatsBar from '$lib/components/StatsBar.svelte';
+	import TacticBar from '$lib/components/TacticBar.svelte';
 	import LogPanel from '$lib/components/LogPanel.svelte';
 	import MatchList from '$lib/components/MatchList.svelte';
 	import { MATCHES_CACHE_TTL_MS } from '$lib/constants';
 	import type { EnrichedMatch } from '$lib/types/match';
 	import type { AccuracyStats } from '$lib/types/prediction';
 	import type LogPanelComponent from '$lib/components/LogPanel.svelte';
+	import type { TacticStatus } from '$lib/types/tactic-status';
 	import type { SseEvent } from '$lib/types/sse';
 
 	let connectionStatus = $state('Verbinden met log stream...');
@@ -15,10 +17,25 @@
 	let matchesLoading = $state(true);
 	let matchesError = $state('');
 	let accuracyStats = $state<AccuracyStats | null>(null);
+	let tacticStatus = $state<TacticStatus | null>(null);
+	let tacticLoading = $state(true);
 	let predictingIds = $state(new Set<number>());
 	let logPanel: LogPanelComponent | undefined = $state();
 
 	const isConnected = $derived(connectionStatus.includes('🟢'));
+
+	async function loadTacticStatus(silent = false) {
+		if (!silent) tacticLoading = true;
+		try {
+			const res = await fetch('/api/stats/tactic');
+			if (!res.ok) return;
+			tacticStatus = await res.json();
+		} catch {
+			// ignore
+		} finally {
+			if (!silent) tacticLoading = false;
+		}
+	}
 
 	async function loadAccuracy() {
 		try {
@@ -63,6 +80,7 @@
 				: m
 		);
 		predictingIds = new Set([...predictingIds].filter((id) => id !== matchId));
+		loadTacticStatus();
 	}
 
 	function handlePredictionFailed(data: Extract<SseEvent, { type: 'prediction-failed' }>) {
@@ -139,11 +157,14 @@
 	onMount(() => {
 		loadMatches();
 		loadAccuracy();
+		loadTacticStatus();
 		const matchInterval = setInterval(loadMatches, MATCHES_CACHE_TTL_MS);
 		const accuracyInterval = setInterval(loadAccuracy, MATCHES_CACHE_TTL_MS);
+		const tacticInterval = setInterval(loadTacticStatus, MATCHES_CACHE_TTL_MS);
 		return () => {
 			clearInterval(matchInterval);
 			clearInterval(accuracyInterval);
+			clearInterval(tacticInterval);
 		};
 	});
 </script>
@@ -182,6 +203,8 @@
 </header>
 
 <StatsBar stats={accuracyStats} />
+
+<TacticBar status={tacticStatus} loading={tacticLoading} onchange={() => loadTacticStatus(true)} />
 
 <LogPanel
 	bind:this={logPanel}

@@ -3,6 +3,7 @@ import type { Prediction, PredictMatchesOptions } from '$lib/types/prediction';
 import type { Settings } from '$lib/types/settings';
 import type { TacticContext, TacticSnapshot } from '$lib/types/tactic';
 import {
+	autoPredictedTactics,
 	clearPredictionInFlight,
 	getPredictUpcomingRunning,
 	invalidateUpcomingMatchesCache,
@@ -18,6 +19,7 @@ import {
 	attachCurrentPronos,
 	isKnockoutMatch,
 	isWithinAutoPredictWindow,
+	isWithinMirrorFinalCheckWindow,
 } from '../match-enrichment';
 import { logPrediction, reportPredictionAccuracy } from '../prediction-log';
 import { predictMatches } from '../predictor';
@@ -30,6 +32,8 @@ import {
 	shouldInjectGeminiContext,
 } from '../tactic';
 import { getRivalFromSnapshot, loadTacticSnapshot } from '../tactic-service';
+import { isTacticEnabled } from './app-settings-service';
+import { invalidateTacticStatusCache } from './tactic-status-service';
 import {
 	fetchMatchesCached,
 	fetchUserPronosByMatchId,
@@ -155,15 +159,23 @@ async function resolvePredictionsForMatches(
 		);
 
 		if (mirrorPredictions.length === 0) {
+			const missing = matches
+				.filter((m) => !loadedSnapshot.rivalPronosByMatchId.has(m.matchId))
+				.map((m) => `${m.homeTeam} vs ${m.awayTeam}`);
 			pinoLogger.warn(
-				'Mirror modus: geen rival-pronos beschikbaar; wedstrijden overgeslagen tot volgende cron.',
+				{ missingMatches: missing, rivalName },
+				'Mirror modus: geen rival-pronos beschikbaar; wacht op volgende cron.',
 			);
 			return [];
 		}
 
 		if (mirrorPredictions.length < matches.length) {
+			const missing = matches
+				.filter((m) => !loadedSnapshot.rivalPronosByMatchId.has(m.matchId))
+				.map((m) => `${m.homeTeam} vs ${m.awayTeam}`);
 			pinoLogger.warn(
-				`Mirror modus: ${mirrorPredictions.length}/${matches.length} wedstrijden hebben rival-prono; rest wordt overgeslagen.`,
+				{ missingMatches: missing, covered: mirrorPredictions.length, total: matches.length },
+				'Mirror modus: niet alle wedstrijden hebben rival-prono; rest wordt overgeslagen.',
 			);
 		}
 
@@ -195,6 +207,8 @@ async function resolvePredictionsForMatches(
 				match,
 				loadedSnapshot.rivalPronosByMatchId.get(match.matchId) ?? null,
 				allMatches,
+				decision,
+				settings.tactic,
 			);
 		} else if (injectContext) {
 			pinoLogger.warn('ai_tactic zonder standings/rival; plain AI voor deze wedstrijd.');
@@ -260,6 +274,7 @@ export async function runPredictSingle(match: MatchWithProno): Promise<Predictio
 		await submitPredictions(api, settings, [prediction], new Map([[matchId, match]]));
 		invalidateUpcomingMatchesCache();
 		invalidateMatchesCache();
+		invalidateTacticStatusCache();
 		broadcastPredictionResult(prediction, match, false);
 		pinoLogger.info(`✅ Pronostiek ingediend voor ${match.homeTeam} vs ${match.awayTeam}.`);
 		return prediction;
@@ -358,9 +373,129 @@ export async function runPredictUpcoming(): Promise<void> {
 		}
 		invalidateUpcomingMatchesCache();
 		invalidateMatchesCache();
+		invalidateTacticStatusCache();
 		pinoLogger.info('✅ Automatische voorspelling voltooid.');
 	} catch (err) {
 		pinoLogger.error({ err }, 'Automatische voorspelling mislukt');
+	} finally {
+		setPredictUpcomingRunning(false);
+	}
+}
+
+export function selectMirrorFinalRecheckMatches(
+	matches: MatchWithProno[],
+	snapshot: TacticSnapshot,
+	rivalFingerprint: string,
+): MatchWithProno[] {
+	return matches.filter((match) => {
+		if (!snapshot.rivalPronosByMatchId.has(match.matchId)) {
+			return false;
+		}
+
+		const prev = autoPredictedTactics.get(match.matchId);
+		if (!prev) {
+			return true;
+		}
+
+		if (prev.mode !== 'mirror') {
+			return false;
+		}
+
+		return prev.rivalFingerprint !== rivalFingerprint;
+	});
+}
+
+export async function runMirrorFinalRecheck(): Promise<void> {
+	if (getPredictUpcomingRunning()) {
+		return;
+	}
+
+	if (!isTacticEnabled()) {
+		return;
+	}
+
+	setPredictUpcomingRunning(true);
+	const settings = getSettings();
+	const api = new PronotoolApiClient(settings);
+
+	try {
+		const allMatches = await fetchMatchesCached(settings);
+		const now = Date.now();
+		const finalWindowMatches = allMatches.filter((match) =>
+			isWithinMirrorFinalCheckWindow(match.startTime, now),
+		);
+
+		if (finalWindowMatches.length === 0) {
+			return;
+		}
+
+		const userPronosByMatchId = await fetchUserPronosByMatchId(settings, api);
+		const matches = attachCurrentPronos(finalWindowMatches, userPronosByMatchId);
+		const snapshot = await loadTacticSnapshot(settings, api, allMatches, matches);
+
+		if (snapshot.decision.mode !== 'mirror') {
+			return;
+		}
+
+		const rivalFingerprint = rivalPronosFingerprint(snapshot.rivalPronosByMatchId);
+		const matchesToUpdate = selectMirrorFinalRecheckMatches(
+			matches,
+			snapshot,
+			rivalFingerprint,
+		);
+
+		if (matchesToUpdate.length === 0) {
+			pinoLogger.debug(
+				{ matchCount: finalWindowMatches.length },
+				'Laatste mirror-check (T-1 min): geen wijzigingen bij rival.',
+			);
+			return;
+		}
+
+		const rival = getRivalFromSnapshot(snapshot);
+		const rivalName = rival?.name ?? snapshot.decision.rivalName ?? `#${settings.tactic.mirrorRank}`;
+
+		pinoLogger.info(
+			{
+				matchCount: matchesToUpdate.length,
+				rival: rivalName,
+				matches: matchesToUpdate.map((m) => `${m.homeTeam} vs ${m.awayTeam}`),
+			},
+			'Laatste mirror-check (T-1 min): rival-prono gewijzigd of nieuw beschikbaar.',
+		);
+
+		const predictions = buildMirrorPredictions(
+			matchesToUpdate,
+			snapshot.rivalPronosByMatchId,
+			rivalName,
+		);
+
+		if (predictions.length === 0) {
+			return;
+		}
+
+		const matchesById = new Map(matchesToUpdate.map((m) => [m.matchId, m]));
+		for (const prediction of predictions) {
+			const match = matchesById.get(prediction.matchId);
+			if (match) {
+				logPredictionDetails(prediction, `${match.homeTeam} vs ${match.awayTeam}`);
+			}
+		}
+
+		await submitPredictions(api, settings, predictions, matchesById);
+		for (const prediction of predictions) {
+			markAutoPredicted(prediction.matchId, 'mirror', rivalFingerprint);
+			const match = matchesById.get(prediction.matchId);
+			if (match) {
+				broadcastPredictionResult(prediction, match, true);
+			}
+		}
+
+		invalidateUpcomingMatchesCache();
+		invalidateMatchesCache();
+		invalidateTacticStatusCache();
+	} catch (err) {
+		pinoLogger.error({ err }, 'Laatste mirror-check mislukt');
 	} finally {
 		setPredictUpcomingRunning(false);
 	}

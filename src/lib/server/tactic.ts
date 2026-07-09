@@ -10,6 +10,7 @@ import type {
 } from '$lib/types/tactic';
 import { getMemberByRank } from '$lib/types/tactic';
 import { isKnockoutMatch } from './match-enrichment';
+import { analyzeMirrorSafety } from './tactic-safety';
 
 function isPlayableMatch(match: Match): boolean {
 	const status = String(match.status || '').toUpperCase();
@@ -34,7 +35,7 @@ export interface DecideTacticInput {
 function shouldMirrorByAutoCriteria(input: DecideTacticInput): TacticDecision | null {
 	const { config, standings, allMatches, myUserId, matchesInBatch } = input;
 
-	if (!standings || standings.members.length === 0) {
+	if (!standings || standings.members.length === 0 || !standings.complete) {
 		return null;
 	}
 
@@ -68,13 +69,61 @@ function shouldMirrorByAutoCriteria(input: DecideTacticInput): TacticDecision | 
 		}
 	}
 
+	const safety = analyzeMirrorSafety(me, standings, remaining, config, lead);
+	if (!safety.canMirror) {
+		return null;
+	}
+
 	return {
 		mode: 'mirror',
-		reason: `#1 met +${lead} op #${config.mirrorRank}, ${remaining} wedstrijd(en) resterend`,
+		reason: `#1 met +${lead} op #${config.mirrorRank}, veilig t.o.v. achtervolgers, ${remaining} wedstrijd(en) resterend`,
 		rivalUserId: rival.userId,
 		rivalName: rival.name,
 		leadPoints: lead,
 		myRank: me.rank,
+		dangerLevel: safety.dangerLevel,
+		chasers: safety.chasers,
+		maxCatchUpPoints: safety.maxCatchUpPoints,
+	};
+}
+
+function buildFallbackDecision(
+	input: DecideTacticInput,
+	reason: string,
+): TacticDecision {
+	const { config, standings, allMatches, myUserId } = input;
+	const me =
+		standings && myUserId
+			? standings.members.find((m) => m.userId === myUserId)
+			: standings
+				? getMemberByRank(standings.members, 1)
+				: undefined;
+	const remaining = countRemainingMatches(allMatches);
+
+	let dangerLevel = undefined;
+	let chasers = undefined;
+	let maxCatchUpPoints = undefined;
+	let blockReason = reason;
+
+	if (me && standings?.complete) {
+		const rival = getMemberByRank(standings.members, config.mirrorRank);
+		const leadOverMirror = rival ? me.points - rival.points : 0;
+		const safety = analyzeMirrorSafety(me, standings, remaining, config, leadOverMirror);
+		dangerLevel = safety.dangerLevel;
+		chasers = safety.chasers;
+		maxCatchUpPoints = safety.maxCatchUpPoints;
+		if (safety.blockReason && config.mode === 'auto') {
+			blockReason = `Auto: ${safety.blockReason}; fallback=${config.autoFallback}`;
+		}
+	}
+
+	return {
+		mode: config.mode === 'auto' ? config.autoFallback : config.mode === 'ai_tactic' ? 'ai_tactic' : 'ai',
+		reason: blockReason,
+		dangerLevel,
+		chasers,
+		maxCatchUpPoints,
+		myRank: me?.rank,
 	};
 }
 
@@ -87,21 +136,18 @@ export function decideTactic(input: DecideTacticInput): TacticDecision {
 			: undefined;
 		return {
 			mode: 'mirror',
-			reason: 'TACTIC_MODE=mirror',
+			reason: 'Modus: spiegel-tactiek',
 			rivalUserId: rival?.userId,
 			rivalName: rival?.name,
 		};
 	}
 
 	if (config.mode === 'ai_tactic') {
-		return { mode: 'ai_tactic', reason: 'TACTIC_MODE=ai_tactic' };
+		return { mode: 'ai_tactic', reason: 'Modus: Gemini + klassement' };
 	}
 
 	if (config.mode === 'ai') {
-		if (config.geminiContext && input.standings) {
-			return { mode: 'ai_tactic', reason: 'TACTIC_GEMINI_CONTEXT=true' };
-		}
-		return { mode: 'ai', reason: 'TACTIC_MODE=ai' };
+		return { mode: 'ai', reason: 'Standaard Gemini' };
 	}
 
 	const autoMirror = shouldMirrorByAutoCriteria(input);
@@ -109,10 +155,7 @@ export function decideTactic(input: DecideTacticInput): TacticDecision {
 		return autoMirror;
 	}
 
-	return {
-		mode: config.autoFallback,
-		reason: `Auto: criteria niet voldaan, fallback=${config.autoFallback}`,
-	};
+	return buildFallbackDecision(input, `Auto: criteria niet voldaan, fallback=${config.autoFallback}`);
 }
 
 export function buildMirrorPredictions(
@@ -151,6 +194,8 @@ export function buildTacticContext(
 	_match: Match,
 	rivalProno: RivalProno | null,
 	allMatches: Match[],
+	decision?: TacticDecision,
+	config?: TacticConfig,
 ): TacticContext {
 	const me =
 		(myUserId ? standings.members.find((m) => m.userId === myUserId) : undefined) ??
@@ -161,6 +206,18 @@ export function buildTacticContext(
 	const myPoints = me?.points ?? 0;
 	const leadOverRival = me ? me.points - rival.points : null;
 	const leadOverThird = me && third ? me.points - third.points : null;
+	const remainingMatches = countRemainingMatches(allMatches);
+
+	const safety =
+		me && config
+			? analyzeMirrorSafety(
+					me,
+					standings,
+					remainingMatches,
+					config,
+					leadOverRival ?? 0,
+				)
+			: null;
 
 	return {
 		groupName: standings.groupName,
@@ -172,7 +229,10 @@ export function buildTacticContext(
 		rivalName: rival.name,
 		rivalUserId: rival.userId,
 		rivalPronoForMatch: rivalProno,
-		remainingMatches: countRemainingMatches(allMatches),
+		remainingMatches,
+		dangerLevel: decision?.dangerLevel ?? safety?.dangerLevel ?? 'safe',
+		maxCatchUpPoints: decision?.maxCatchUpPoints ?? safety?.maxCatchUpPoints ?? 0,
+		chasers: decision?.chasers ?? safety?.chasers ?? [],
 	};
 }
 

@@ -73,6 +73,10 @@ Open http://localhost:3000
 |----------|--------------|
 | `GET /api/matches/upcoming` | Aankomende wedstrijden met UI-metadata |
 | `GET /api/stats/accuracy` | Pronostiek-accuratesse |
+| `GET /api/stats/tactic` | Klassement, tactiekmodus en mirror-status |
+| `GET /api/settings/tactic` | Opgeslagen eindfase-tactiek instellingen |
+| `PUT /api/settings/tactic` | Eindfase-tactiek inschakelen/modus/groep opslaan |
+| `GET /api/settings/groups` | Minicompetities uit Sporza overview |
 | `GET /api/logs` | SSE log stream |
 | `POST /api/run/predict-match/[id]` | Handmatige voorspelling |
 | `POST /api/run/auth-refresh` | Auth token vernieuwen |

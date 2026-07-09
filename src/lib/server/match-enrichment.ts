@@ -1,4 +1,4 @@
-import { AUTO_PREDICT_WINDOW_MS } from '$lib/constants';
+import { AUTO_PREDICT_WINDOW_MS, MIRROR_FINAL_CHECK_MS } from '$lib/constants';
 import type { Match, MatchWithProno } from '$lib/types/match';
 import { autoPredictedMatchIds } from './app-state';
 
@@ -18,6 +18,11 @@ export function isKnockoutMatch(match: Pick<Match, 'phaseType' | 'phaseName'>): 
 export function isWithinAutoPredictWindow(startTime: string, now = Date.now()): boolean {
 	const msUntil = new Date(startTime).getTime() - now;
 	return msUntil > 0 && msUntil <= AUTO_PREDICT_WINDOW_MS;
+}
+
+export function isWithinMirrorFinalCheckWindow(startTime: string, now = Date.now()): boolean {
+	const msUntil = new Date(startTime).getTime() - now;
+	return msUntil > 0 && msUntil <= MIRROR_FINAL_CHECK_MS;
 }
 
 export function attachCurrentPronos(

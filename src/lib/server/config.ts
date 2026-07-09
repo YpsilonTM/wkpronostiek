@@ -3,33 +3,9 @@ import path from 'node:path';
 import dotenv from 'dotenv';
 import { resolveDatabaseUrl } from '$lib/database-url';
 import type { Settings } from '$lib/types/settings';
-import type { TacticAutoFallback, TacticMode } from '$lib/types/tactic';
+import { buildTacticConfig, getTacticUiSettingsSync } from './services/app-settings-service';
 
 dotenv.config();
-
-function parseTacticMode(value: string | undefined): TacticMode {
-	const mode = (value || 'ai').toLowerCase();
-	if (mode === 'ai_tactic' || mode === 'mirror' || mode === 'auto') {
-		return mode;
-	}
-	return 'ai';
-}
-
-function parseAutoFallback(value: string | undefined): TacticAutoFallback {
-	return (value || 'ai_tactic').toLowerCase() === 'ai' ? 'ai' : 'ai_tactic';
-}
-
-function parseBool(value: string | undefined, defaultValue: boolean): boolean {
-	if (value === undefined || value === '') {
-		return defaultValue;
-	}
-	return value.toLowerCase() === 'true';
-}
-
-function parseIntEnv(value: string | undefined, defaultValue: number): number {
-	const parsed = Number.parseInt(value || '', 10);
-	return Number.isFinite(parsed) ? parsed : defaultValue;
-}
 
 export function getDataDir(): string {
 	const dir = process.env.DATA_DIR || '';
@@ -65,24 +41,7 @@ export function getSettings(): Settings {
 		pronotoolAuthCacheFile: '.pronotool_auth.json',
 		slowMoMs: 0,
 		timezone: 'Europe/Brussels',
-		tactic: {
-			mode: parseTacticMode(process.env.TACTIC_MODE),
-			groupName: process.env.TACTIC_GROUP_NAME || '',
-			groupId: process.env.TACTIC_GROUP_ID || '',
-			mirrorRank: parseIntEnv(process.env.TACTIC_MIRROR_RANK, 2),
-			leadThreshold: parseIntEnv(process.env.TACTIC_LEAD_THRESHOLD, 0),
-			remainingMatches: parseIntEnv(process.env.TACTIC_REMAINING_MATCHES, 8),
-			knockoutOnly: parseBool(process.env.TACTIC_KNOCKOUT_ONLY, false),
-			autoFallback: parseAutoFallback(process.env.TACTIC_AUTO_FALLBACK),
-			geminiContext: parseBool(process.env.TACTIC_GEMINI_CONTEXT, false),
-			overwrite: parseBool(process.env.TACTIC_OVERWRITE, true),
-			standingsApiUrl:
-				process.env.TACTIC_STANDINGS_API_URL ||
-				'https://api.sporza.be/pronotool/1/groups/{groupId}/standings',
-			rivalPronosApiUrl:
-				process.env.TACTIC_RIVAL_PRONOS_API_URL ||
-				'https://api.sporza.be/pronotool/1/users/{userId}/pronos?groupId={groupId}',
-		},
+		tactic: buildTacticConfig(getTacticUiSettingsSync()),
 	};
 }
 
@@ -95,4 +54,4 @@ export function getAuthCachePath(settings: Settings): string {
 	return getDataPath(path.basename(file));
 }
 
-export { AUTO_PREDICT_WINDOW_MS, MATCHES_CACHE_TTL_MS } from '$lib/constants';
+export { AUTO_PREDICT_WINDOW_MS, MATCHES_CACHE_TTL_MS, MIRROR_FINAL_CHECK_MS } from '$lib/constants';

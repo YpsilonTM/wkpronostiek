@@ -72,16 +72,31 @@ function buildTacticContextSection(match: MatchWithProno, context: TacticContext
 	const thirdLine =
 		context.leadOverThird !== null ? `Voorsprong op #3: +${context.leadOverThird} pt.` : '';
 
+	const chaserLines =
+		context.chasers.length > 0
+			? context.chasers
+					.map((chaser) => `#${chaser.rank} ${chaser.name}: +${chaser.leadPoints} pt voorsprong`)
+					.join('; ')
+			: '';
+
+	const dangerInstruction =
+		context.dangerLevel === 'critical'
+			? 'KRITIEK: minstens één achtervolger binnen 20 punten. Spiegel #2 NIET blind — kies scores die ook t.o.v. #3+ veilig zijn.'
+			: context.dangerLevel === 'caution'
+				? `VOORZICHTIG: achtervolger(s) binnen 40 punten of spiegel niet wiskundig veilig (max. inhalen ${context.maxCatchUpPoints} pt). Weeg alle achtervolgers mee, niet alleen #2.`
+				: 'Achtervolgers zijn ver genoeg verwijderd voor een veilige eindfase.';
+
 	return `
 COMPETITIE-CONTEXT (eindfase-tactiek):
 - ${leadLine}
 - ${thirdLine}
-- Nog ${context.remainingMatches} speelbare wedstrijd(en) in het tornooi.
+- Achtervolgers: ${chaserLines || 'geen data'}
+- Nog ${context.remainingMatches} speelbare wedstrijd(en); max. inhalen door achtervolger: ${context.maxCatchUpPoints} pt.
 - ${rivalLine}
+- ${dangerInstruction}
 ${describeScoringRules(isKnockout)}
-- Als je exact dezelfde score kiest als je rival, scoren jullie op die wedstrijd evenveel punten → je voorsprong blijft constant op resterende wedstrijden.
-- Prioriteit: optimaliseer het KLASSEMENT in "${context.groupName}", niet per se de "beste voetbalvoorspelling",
-  tenzij je achterloopt of meerdere spelers nog kunnen winnen.
+- Spiegel #2 exact = zelfde punten als #2 op resterende wedstrijden, maar #3 kan je nog inhalen als zij beter scoren.
+- Prioriteit: optimaliseer het KLASSEMENT in "${context.groupName}", niet per se de "beste voetbalvoorspelling".
 `.trim();
 }
 

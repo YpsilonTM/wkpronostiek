@@ -15,22 +15,25 @@ model AuthToken {
 }
 
 model Prediction {
-  id             Int      @id @default(autoincrement())
-  matchId        Int
-  homeTeam       String?
-  awayTeam       String?
-  phaseName      String?
-  startTime      String?
-  homeScore      Int
-  awayScore      Int
-  shootoutWinner Int?
-  reasoning      String   @default("")
-  searchAnalysis String   @default("")
-  model          String?
-  escalated      Boolean  @default(false)
-  submittedAt    DateTime @default(now())
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id                 Int      @id @default(autoincrement())
+  matchId            Int
+  homeTeam           String?
+  awayTeam           String?
+  phaseName          String?
+  startTime          String?
+  homeScore          Int
+  awayScore          Int
+  shootoutWinner     Int?
+  reasoning          String   @default("")
+  searchAnalysis     String   @default("")
+  model              String?
+  escalated          Boolean  @default(false)
+  tactic             String?
+  mirroredFromUserId String?
+  mirroredFromRank   Int?
+  submittedAt        DateTime @default(now())
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   @@index([matchId])
   @@index([submittedAt])
@@ -43,4 +46,11 @@ model MigrationMeta {
   authImported        Boolean  @default(false)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
+}
+
+model AppSetting {
+  key       String   @id
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
