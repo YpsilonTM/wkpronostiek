@@ -165,14 +165,6 @@ function buildStandingsFromOverview(targetGroup: GroupSummary): GroupStandings |
 	};
 }
 
-export function findMyMember(
-	standings: GroupStandings,
-	myUserId: string | null,
-): (typeof standings.members)[number] | undefined {
-	if (!myUserId) return undefined;
-	return standings.members.find((m) => m.userId === myUserId);
-}
-
 export function isStandingsUsableForMirror(standings: GroupStandings | null): boolean {
 	return Boolean(standings?.complete && standings.members.length >= 2);
 }

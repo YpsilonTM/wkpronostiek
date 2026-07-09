@@ -1,7 +1,7 @@
 import type { Match, MatchWithProno } from '$lib/types/match';
 import type { Prediction, PredictMatchesOptions } from '$lib/types/prediction';
 import type { Settings } from '$lib/types/settings';
-import type { TacticContext, TacticSnapshot } from '$lib/types/tactic';
+import type { TacticContext, TacticSnapshot, RivalProno } from '$lib/types/tactic';
 import {
 	autoPredictedTactics,
 	clearPredictionInFlight,
@@ -128,6 +128,27 @@ function logPredictionDetails(prediction: Prediction, matchLabel?: string): void
 	}
 }
 
+function formatMissingRivalMatches(
+	matches: MatchWithProno[],
+	rivalPronosByMatchId: Map<number, RivalProno>,
+): string[] {
+	return matches
+		.filter((match) => !rivalPronosByMatchId.has(match.matchId))
+		.map((match) => `${match.homeTeam} vs ${match.awayTeam}`);
+}
+
+function toRivalMember(
+	standings: NonNullable<TacticSnapshot['standings']>,
+	rival: NonNullable<ReturnType<typeof getRivalFromSnapshot>>,
+) {
+	return {
+		userId: rival.userId,
+		name: rival.name,
+		rank: rival.rank,
+		points: standings.members.find((m) => m.userId === rival.userId)?.points ?? 0,
+	};
+}
+
 async function resolvePredictionsForMatches(
 	settings: Settings,
 	api: PronotoolApiClient,
@@ -159,9 +180,7 @@ async function resolvePredictionsForMatches(
 		);
 
 		if (mirrorPredictions.length === 0) {
-			const missing = matches
-				.filter((m) => !loadedSnapshot.rivalPronosByMatchId.has(m.matchId))
-				.map((m) => `${m.homeTeam} vs ${m.awayTeam}`);
+			const missing = formatMissingRivalMatches(matches, loadedSnapshot.rivalPronosByMatchId);
 			pinoLogger.warn(
 				{ missingMatches: missing, rivalName },
 				'Mirror modus: geen rival-pronos beschikbaar; wacht op volgende cron.',
@@ -170,9 +189,7 @@ async function resolvePredictionsForMatches(
 		}
 
 		if (mirrorPredictions.length < matches.length) {
-			const missing = matches
-				.filter((m) => !loadedSnapshot.rivalPronosByMatchId.has(m.matchId))
-				.map((m) => `${m.homeTeam} vs ${m.awayTeam}`);
+			const missing = formatMissingRivalMatches(matches, loadedSnapshot.rivalPronosByMatchId);
 			pinoLogger.warn(
 				{ missingMatches: missing, covered: mirrorPredictions.length, total: matches.length },
 				'Mirror modus: niet alle wedstrijden hebben rival-prono; rest wordt overgeslagen.',
@@ -184,27 +201,18 @@ async function resolvePredictionsForMatches(
 
 	const apiKey = process.env.GEMINI_API_KEY || '';
 	const injectContext = shouldInjectGeminiContext(decision, settings.tactic);
-	const rivalForContext = getRivalFromSnapshot(loadedSnapshot);
-	const tacticLabel = formatTacticLabel(injectContext ? 'ai_tactic' : 'ai', rivalForContext?.name);
+	const tacticLabel = formatTacticLabel(injectContext ? 'ai_tactic' : 'ai', rival?.name);
 
 	const predictions: Prediction[] = [];
 
 	for (const match of matches) {
 		let tacticContext: TacticContext | undefined;
 
-		if (injectContext && loadedSnapshot.standings && rivalForContext) {
+		if (injectContext && loadedSnapshot.standings && rival) {
 			tacticContext = buildTacticContext(
 				loadedSnapshot.standings,
 				loadedSnapshot.myUserId,
-				{
-					userId: rivalForContext.userId,
-					name: rivalForContext.name,
-					rank: rivalForContext.rank,
-					points:
-						loadedSnapshot.standings.members.find((m) => m.userId === rivalForContext.userId)
-							?.points ?? 0,
-				},
-				match,
+				toRivalMember(loadedSnapshot.standings, rival),
 				loadedSnapshot.rivalPronosByMatchId.get(match.matchId) ?? null,
 				allMatches,
 				decision,

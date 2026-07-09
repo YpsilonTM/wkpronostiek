@@ -86,3 +86,15 @@ export interface TacticSnapshot {
 export function getMemberByRank(members: GroupMember[], rank: number): GroupMember | undefined {
 	return members.find((m) => m.rank === rank);
 }
+
+/** Resolve the current user in standings, falling back to #1 when userId is unknown. */
+export function resolveMyMember(
+	standings: GroupStandings,
+	myUserId: string | null,
+): GroupMember | undefined {
+	if (myUserId) {
+		const byId = standings.members.find((m) => m.userId === myUserId);
+		if (byId) return byId;
+	}
+	return getMemberByRank(standings.members, 1);
+}

@@ -262,7 +262,3 @@ export async function saveTacticUiSettings(settings: TacticUiSettings): Promise<
 	cachedUiSettings = parseStoredSettings(saved.value);
 	return cachedUiSettings;
 }
-
-export function invalidateAppSettingsCache(): void {
-	cachedUiSettings = null;
-}

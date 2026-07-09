@@ -1,4 +1,5 @@
 import type { TacticStatus } from '$lib/types/tactic-status';
+import { resolveMyMember } from '$lib/types/tactic';
 import { getSettings } from '../config';
 import { isTacticEnabled } from './app-settings-service';
 import { attachCurrentPronos, isWithinAutoPredictWindow } from '../match-enrichment';
@@ -38,11 +39,11 @@ export async function getTacticStatus(forceRefresh = false): Promise<TacticStatu
 			rivalRank: null,
 			rivalPoints: null,
 			leadPoints: null,
-		remainingMatches: null,
-		dangerLevel: null,
-		chasers: [],
-		maxCatchUpPoints: null,
-		mirrorReady: false,
+			remainingMatches: null,
+			dangerLevel: null,
+			chasers: [],
+			maxCatchUpPoints: null,
+			mirrorReady: false,
 			mirrorCoverage: { withRivalProno: 0, total: 0 },
 		};
 		_cacheTime = now;
@@ -61,10 +62,7 @@ export async function getTacticStatus(forceRefresh = false): Promise<TacticStatu
 	const rival = getRivalFromSnapshot(snapshot);
 	const standings = snapshot.standings;
 
-	const myMember =
-		standings && snapshot.myUserId
-			? standings.members.find((m) => m.userId === snapshot.myUserId)
-			: standings?.members.find((m) => m.rank === (standings.members[0]?.rank ?? 1));
+	const myMember = standings ? resolveMyMember(standings, snapshot.myUserId) : undefined;
 
 	const rivalMember =
 		rival && standings ? standings.members.find((m) => m.userId === rival.userId) : null;

@@ -8,7 +8,7 @@ import type {
 	TacticContext,
 	TacticDecision,
 } from '$lib/types/tactic';
-import { getMemberByRank } from '$lib/types/tactic';
+import { getMemberByRank, resolveMyMember } from '$lib/types/tactic';
 import { isKnockoutMatch } from './match-enrichment';
 import { analyzeMirrorSafety } from './tactic-safety';
 
@@ -17,10 +17,10 @@ function isPlayableMatch(match: Match): boolean {
 	return status !== 'END' && status !== 'FINISHED' && status !== 'CANCELLED';
 }
 
-export function countRemainingMatches(allMatches: Match[]): number {
+export function countRemainingMatches(allMatches: Match[], now = Date.now()): number {
 	return allMatches.filter((match) => {
 		if (!isPlayableMatch(match)) return false;
-		return new Date(match.startTime) > new Date();
+		return new Date(match.startTime).getTime() > now;
 	}).length;
 }
 
@@ -39,9 +39,7 @@ function shouldMirrorByAutoCriteria(input: DecideTacticInput): TacticDecision | 
 		return null;
 	}
 
-	const me =
-		(myUserId ? standings.members.find((m) => m.userId === myUserId) : undefined) ??
-		getMemberByRank(standings.members, 1);
+	const me = resolveMyMember(standings, myUserId);
 
 	if (me?.rank !== 1) {
 		return null;
@@ -92,17 +90,12 @@ function buildFallbackDecision(
 	reason: string,
 ): TacticDecision {
 	const { config, standings, allMatches, myUserId } = input;
-	const me =
-		standings && myUserId
-			? standings.members.find((m) => m.userId === myUserId)
-			: standings
-				? getMemberByRank(standings.members, 1)
-				: undefined;
+	const me = standings ? resolveMyMember(standings, myUserId) : undefined;
 	const remaining = countRemainingMatches(allMatches);
 
-	let dangerLevel = undefined;
-	let chasers = undefined;
-	let maxCatchUpPoints = undefined;
+	let dangerLevel: TacticDecision['dangerLevel'];
+	let chasers: TacticDecision['chasers'];
+	let maxCatchUpPoints: TacticDecision['maxCatchUpPoints'];
 	let blockReason = reason;
 
 	if (me && standings?.complete) {
@@ -118,7 +111,7 @@ function buildFallbackDecision(
 	}
 
 	return {
-		mode: config.mode === 'auto' ? config.autoFallback : config.mode === 'ai_tactic' ? 'ai_tactic' : 'ai',
+		mode: config.autoFallback,
 		reason: blockReason,
 		dangerLevel,
 		chasers,
@@ -191,15 +184,12 @@ export function buildTacticContext(
 	standings: GroupStandings,
 	myUserId: string | null,
 	rival: GroupMember,
-	_match: Match,
 	rivalProno: RivalProno | null,
 	allMatches: Match[],
 	decision?: TacticDecision,
 	config?: TacticConfig,
 ): TacticContext {
-	const me =
-		(myUserId ? standings.members.find((m) => m.userId === myUserId) : undefined) ??
-		getMemberByRank(standings.members, 1);
+	const me = resolveMyMember(standings, myUserId);
 	const third = getMemberByRank(standings.members, 3);
 
 	const myRank = me?.rank ?? 0;
@@ -240,6 +230,10 @@ export function shouldInjectGeminiContext(decision: TacticDecision, config: Tact
 	if (decision.mode === 'ai_tactic') return true;
 	if (decision.mode === 'ai' && config.geminiContext) return true;
 	return false;
+}
+
+export function needsRivalPronos(decision: TacticDecision, config: TacticConfig): boolean {
+	return decision.mode === 'mirror' || shouldInjectGeminiContext(decision, config);
 }
 
 export function formatTacticLabel(mode: ResolvedTacticMode, rivalName?: string): string | null {

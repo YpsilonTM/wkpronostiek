@@ -8,7 +8,7 @@ import { pinoLogger } from './logger';
 import type { PronotoolApiClient } from './pronotool-api';
 import { fetchRivalPronosByMatchId } from './rival-pronos';
 import { fetchGroupStandingsForConfig } from './standings';
-import { decideTactic } from './tactic';
+import { decideTactic, needsRivalPronos } from './tactic';
 
 export async function loadTacticSnapshot(
 	settings: Settings,
@@ -55,13 +55,14 @@ export async function loadTacticSnapshot(
 
 		let rivalPronosByMatchId = new Map<number, RivalProno>();
 
+		const needsPronos = needsRivalPronos(decision, settings.tactic);
 		const rivalUserId =
 			decision.rivalUserId ??
 			(standings
 				? getMemberByRank(standings.members, settings.tactic.mirrorRank)?.userId
 				: undefined);
 
-		if (rivalUserId && standings?.groupId) {
+		if (needsPronos && rivalUserId && standings?.groupId) {
 			rivalPronosByMatchId = await fetchRivalPronosByMatchId(
 				settings,
 				api,
@@ -89,13 +90,13 @@ export function getRivalFromSnapshot(snapshot: TacticSnapshot): {
 	name: string;
 	rank: number;
 } | null {
-	const rank = snapshot.decision.rivalUserId
+	const rivalMember = snapshot.decision.rivalUserId
 		? snapshot.standings?.members.find((m) => m.userId === snapshot.decision.rivalUserId)
 		: snapshot.standings
 			? getMemberByRank(snapshot.standings.members, 2)
 			: null;
 
-	if (!rank) {
+	if (!rivalMember) {
 		if (snapshot.decision.rivalUserId && snapshot.decision.rivalName) {
 			return {
 				userId: snapshot.decision.rivalUserId,
@@ -106,5 +107,5 @@ export function getRivalFromSnapshot(snapshot: TacticSnapshot): {
 		return null;
 	}
 
-	return { userId: rank.userId, name: rank.name, rank: rank.rank };
+	return { userId: rivalMember.userId, name: rivalMember.name, rank: rivalMember.rank };
 }
