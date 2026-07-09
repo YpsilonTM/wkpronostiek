@@ -16,7 +16,7 @@
 		"format": "biome format --write .",
 		"test": "vitest run",
 		"test:watch": "vitest",
-		"db:generate": "bunx --bun prisma generate",
+		"db:generate": "svelte-kit sync && bunx --bun prisma generate",
 		"db:migrate": "bunx --bun prisma migrate dev",
 		"db:migrate:deploy": "bunx --bun prisma migrate deploy",
 		"db:import-legacy": "bun run scripts/import-legacy-data.ts"
